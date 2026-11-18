@@ -1,0 +1,68 @@
+Text extracted from supplied data_dictionary(1).pdf. Original formatting may differ.
+
+<PARSED TEXT FOR PAGE: 1 / 2>
+   Data Dictionary & Normalization Guide
+
+   1. Leads Dataset Schema
+Column Name           Data Type        Description
+
+Lead_ID               String           Unique identifier for each lead.
+
+Company_Name          String           The name of the prospective
+                                       company.
+
+Region                String           Geographic region (contains
+                                       mixed cases/aliases).
+
+Language              String           Primary language of the lead
+                                       (contains mixed cases/aliases).
+
+Industry_Vertical     String           Industry sector (e.g., Finance,
+                                       Healthcare, Manufacturing).
+
+Company_Size          Integer          Total employees. Can be
+                                       blank/null. System must handle
+                                       missing values.
+
+Recent_Activity       String           The latest action taken by the
+                                       lead.
+
+VIP_Referral          Boolean          True/False flag for immediate
+                                       Critical routing.
+
+
+
+
+   2. Representatives Dataset Schema
+Column Name           Data Type        Description
+
+Rep_ID                String           Unique identifier for each sales
+                                       representative.
+
+Name                  String           The representative's full name.
+<PARSED TEXT FOR PAGE: 2 / 2>
+Column Name                Data Type   Description
+
+Region                     String      Geographic region they cover
+                                       (contains mixed cases/aliases).
+
+Language                   String      Language spoken by the
+                                       representative (contains mixed
+                                       cases/aliases).
+
+Industry_Vertical_Expert   String      The industry vertical the rep
+ise                                    specializes in.
+
+Seniority_Level            String      The representative's rank
+                                       (Junior, Senior, or Manager).
+
+Current_Capacity           Integer     Starting number of assigned
+                                       leads (always starts at 0).
+
+Max_Capacity               Integer     The absolute maximum number
+                                       of leads this rep can hold. Note:
+                                       Juniors typically handle high
+                                       volume (40-50), Seniors handle
+                                       mid-volume (20-25), and
+                                       Managers handle low volume
+                                       (5-10).
