@@ -1,0 +1,72 @@
+Text extracted from supplied scoring_logic_cheat_sheet.pdf. Original formatting may differ.
+
+<PARSED TEXT FOR PAGE: 1 / 2>
+Strategic Note to Teams:
+The business rules and point values provided below are intended to serve as a baseline
+reference. While you may use this exact matrix to build your prototype, teams are highly
+encouraged to use their best judgment and business acumen to refine, adjust, or completely
+redesign this scoring model. If you believe a different priority distribution makes better
+business sense for a sales organization, implement it! Just ensure your routing engine still
+functions flawlessly, and be prepared to defend your strategic decisions during your final
+presentation.
+
+
+
+Scoring Logic & Routing Business Rules
+Your routing engine must calculate a total score for each lead based on the following
+attributes.
+
+Note: For testing purposes, expect the dataset to contain roughly 10% Critical, 20% High,
+40% Medium, and 30% Low priority leads.
+
+
+1. The VIP Override
+   ●​ If a lead has VIP_Referral == True , immediately assign a score of 100 points, bypass
+      the rest of the scoring matrix, and categorize them as CRITICAL. (Expect this tag to
+      be rare).
+
+
+2. Standard Scoring Matrix
+For all non-VIP leads, calculate the score using the following criteria:
+
+A. Company Size (Employee Count)
+
+   ●​   Enterprise (1,000+ employees): +50 points
+   ●​   Mid-Market (100–999 employees): +30 points
+   ●​   SMB (1–99 employees): +0 points
+   ●​   Fallback Rule: If the Company Size field is missing/blank, assign a default of +20
+        points.
+
+B. Recent Activity
+
+   ●​   Requested Live Demo / Contact Sales: +35 points
+   ●​   Attended Webinar: +25 points
+   ●​   Downloaded Whitepaper : +15 points
+   ●​   Visited Pricing Page: +5 points
+<PARSED TEXT FOR PAGE: 2 / 2>
+   ●​ Fallback Rule: Any other recorded activity, unmapped action, or missing value receives
+      +0 points.
+
+C. Industry Vertical Multiplier (Bonus Priority)
+
+   ●​ If the Lead is in the Technology sector: +15 points
+   ●​ If the Lead is in the Healthcare or Finance sector: +10 points
+   ●​ If the Lead is in the Manufacturing or Retail sector: +0 points
+
+
+3. Priority Tiers
+Once the total score is calculated, categorize the lead into one of the following tiers:
+
+   ●​   CRITICAL: 85+ points (Must be prioritized at the top of the routing queue)
+   ●​   HIGH: 60 – 84 points
+   ●​   MEDIUM: 40 – 59 points
+   ●​   LOW: 0 – 39 points
+
+
+4. Seniority Routing Rule
+   ●​ Leads categorized as CRITICAL (either by score or VIP status) require experienced
+      handling.
+   ●​ Your logic must attempt to route Critical leads to a Senior representative first.
+   ●​ If all eligible Seniors in that region/vertical/language are at maximum capacity, fallback
+      and route the lead to a Manager.
+   ●​ Junior representatives cannot receive Critical leads under any circumstances.
