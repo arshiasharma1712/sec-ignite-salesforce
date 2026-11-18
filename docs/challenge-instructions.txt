@@ -1,0 +1,202 @@
+Text extracted from supplied Ignite Challenge Salesforce Prompt(1).docx. Original formatting may differ.
+
+<PARSED TEXT FOR PAGE: 1 / 5>
+                   2026 Ignite Design Challenge
+                                        Salesforce
+ Lead Prioritization: The Right Lead, to the Right Rep, at the
+                          Right Time
+                    Focus area: Computer Science / Software Engineering
+
+
+
+
+Challenge overview
+Sales organizations receive prospective customer information from websites, events, and
+referrals. A core operational challenge is deciding which leads deserve immediate attention and
+which representative should receive them based on their region, expertise, language, and
+current workload. Teams must build a streamlined software prototype that takes in large lists of
+leads, calculates a priority score based on business rules, assigns leads to the most appropriate
+representative, and displays the results on a simple manager-facing dashboard.
+
+Background
+Today, much of this work is done manually or inefficiently. Each sales lead comes with
+information such as company size, recent activity, industry, region, and language, while
+representatives differ in expertise, seniority, and current workload. A reliable routing system
+must account for these differences without overloading representatives or overlooking important
+leads.
+The incoming datasets simulate real-world, messy data containing inconsistent formatting,
+missing values, and unstandardized aliases. Teams will need to prepare these records before
+the routing logic can successfully match leads to representatives. The finished system should
+also make it easy for a sales manager to review and understand the results.
+
+Objective
+Your team must build a streamlined software prototype to prioritize and route sales leads using
+provided datasets of leads and sales representatives. You will design a working system that
+cleans incoming data, calculates lead priority scores, assigns leads to the most appropriate
+representatives, and displays the results on a manager-facing dashboard. The system must
+also handle missing data and sudden large uploads without failing.
+<PARSED TEXT FOR PAGE: 2 / 5>
+Success should include:
+• A rule-based engine that assigns point values to leads and groups them into Critical, High,
+Medium, and Low priority levels, including VIP overrides.
+• Smart routing based on Region, Language, Industry Vertical, representative seniority, and
+available capacity.
+• A thoughtful distribution strategy that balances assignments and sends overflow leads to a
+visible Manager Review queue.
+• A lightweight, interactive dashboard showing the prioritized lead queue, system health metrics,
+and representative capacity.
+• A working system that processes the large-scale dataset quickly and handles missing values,
+invalid inputs, and other edge cases.
+
+Given information and assumptions
+• Two pairs of CSV datasets are provided: 100 sample leads with 10 representatives for initial
+development, and 50,000-scale leads with 1,600 representatives for performance testing.
+• Lead records include region, language, industry vertical, company size, recent activity, and a
+VIP referral flag. Representative records include region, language, industry expertise, seniority,
+current capacity, and maximum capacity.
+• The Scoring Logic Cheat Sheet provides baseline point values and priority tiers. Teams may
+refine or redesign the standard scoring model if they explain their reasoning. VIP referrals must
+still receive Critical priority.
+• Representative capacity starts at zero in the provided datasets. Teams must respect
+maximum-capacity limits and handle invalid or missing values without causing the system to fail.
+• The Data Dictionary explains field definitions and expected values. Records may contain
+inconsistent casing, aliases, missing information, or ambiguous values. Teams should
+document reasonable assumptions and fallback strategies.
+
+Requirements and constraints
+Requirements
+   1. Data Quality: The incoming datasets simulate real-world, messy data containing
+      inconsistent formatting, missing values, and unstandardized aliases. Your system must
+      programmatically clean, standardize, and prepare these strings before the routing logic
+      can successfully match leads to representatives.
+   2. Automated Scoring: Create a rule-based engine that assigns point values to leads
+      based on traits (company size, recent activity, industry) and groups them into priority
+      levels (Critical, High, Medium, Low) according to the provided Scoring Logic Cheat
+      Sheet.
+   3. VIP Override: Leads flagged as VIP_Referral must bypass standard scoring and
+      immediately be categorized as "Critical".
+   4. Missing Data Fallback: When a lead is missing a critical field, the system must not fail.
+      Teams must determine and implement their own logical fallback strategy to ensure the
+      prospect is appropriately handled and not dropped.
+<PARSED TEXT FOR PAGE: 3 / 5>
+   5. Smart Routing (Multi-Skill Matrix): Assign leads to representatives based on a strict
+      matching of Region, Language, and Industry Vertical.
+   6. Seniority Constraint: "Critical" priority leads are highly sensitive. The system must
+      attempt to route them to a "Senior" representative first. If all eligible Seniors are at
+      maximum capacity, the logic should then route to a "Manager". "Junior" representatives
+      cannot receive Critical leads.
+   7. Round-Robin Distribution: If multiple representatives share the exact same matching
+      criteria and have available capacity, teams must design and implement their own
+      distribution logic. Do not simply assign all leads to the first matching record. You are
+      encouraged to apply computer science scheduling algorithms or custom allocation
+      strategies, and you must be prepared to defend your chosen approach during the
+      presentation.
+   8. The Manager Review Queue (Overflow): If every eligible representative reaches their
+      maximum capacity limit, do not drop the remaining leads. Route them to a visible
+      "Manager Review" overflow bucket.
+   9. Scale Challenge: The system must be capable of processing a sudden, massive upload
+      of new leads (leads_scale.csv) quickly without freezing. Automated tests should also
+      demonstrate that the core logic handles edge cases correctly.
+Dashboard & UI Requirements
+• Interactive System: Build a lightweight frontend or visual dashboard to display the routing
+engine's outputs and system status in real time. Use your best judgment to design a clean,
+responsive layout that effectively presents these controls and displays system outcomes.
+     • Execution Triggers: Provide controls to run your pipeline against both the provided
+     sample and scale datasets on demand.
+     • State Reset: Include a way to clear pipeline outputs and reset representative capacities
+     back to baseline.
+• System Health KPIs: Teams must determine which metrics are most critical for end-users
+(such as sales managers) to monitor. Design your own dashboard metric cards that highlight the
+operational and system health data you believe is most valuable, and be prepared to defend
+why you chose those metrics.
+• Prioritized Lead Queue: Teams must design an intuitive interface displaying the routed
+results. Use your product engineering intuition and user empathy to determine the best way for
+a sales manager to interact with this data. Consider what features (such as sorting, filtering, or
+grouping) are necessary for a manager to effectively oversee a high-stakes lead queue, and be
+prepared to explain your UX decisions.
+• Capacity & Load Tracking: Provide a visual way to track lead assignments against
+representative bandwidth (e.g., allocated load vs. maximum capacity per representative). Use
+your best judgment to present representative utilization clearly and compactly without cluttering
+the interface.
+Constraints
+• Strict Constraint: No technical knowledge about advanced artificial intelligence, machine
+learning, databases, or SQL is required. A clear, logic-based, in-memory approach is expected
+and fully sufficient to complete this challenge.
+<PARSED TEXT FOR PAGE: 4 / 5>
+• Assignments must respect eligibility, seniority restrictions, and maximum representative
+capacities. Critical leads must never be assigned to Junior representatives.
+• Teams must be able to explain and defend their scoring choices, fallback behavior, allocation
+strategy, and dashboard design.
+Optional or bonus objectives
+• Incorporate machine learning or other advanced methods to improve the system, provided the
+required rules and safeguards remain clear and functional.
+• Add useful dashboard controls, analytics, or performance optimizations beyond the core
+requirements.
+
+Recommended starting points
+• Review the sample datasets and Data Dictionary to identify field formats, aliases, and edge
+cases before implementing routing logic.
+• Use the Scoring Logic Cheat Sheet to establish the initial priority model, then test VIP
+overrides, seniority rules, capacity limits, and overflow cases.
+• Build and test the scoring and routing pipeline before connecting it to the dashboard. Consider
+how to explain the data flow in a simple system architecture diagram.
+• Test the full pipeline on the scale datasets and measure how quickly it processes a large
+upload.
+
+Deliverables
+Teams should submit:
+   1. Closing Presentation (main deliverable): A presentation explaining your team's
+      approach and trade-offs, including a short live demonstration of the working software
+      within the presentation time. Include the assumptions, data-cleaning and scoring logic,
+      routing decisions, fallback strategies, dashboard design, performance results, and
+      rationale. The presentation must also contain a System Blueprint, with one or two slides
+      showing a visual map of how the different parts of the software connect and move data.
+   2. Working Software: The final code, including a brief guide (README.md) on how to set
+      it up, install dependencies, and run it locally. Teams may also submit their work by
+      pushing the final codebase to a Git repository (e.g., GitHub, GitLab) for easy access and
+      review.
+   3. Quality Checks: Automated tests (e.g., using pytest) to prove the system works
+      correctly. Focus on testing edge cases (missing data, ties in rep capacity, invalid inputs).
+
+A separate written report is not required. Technical explanations and design rationale should be
+included in the final presentation.
+Presentation format and deadline
+Each team will have 10 minutes to present, including any live demonstration, followed by 5
+minutes of Q&A. All required deliverables are due Saturday, November 21, 2026, at 10:00 PM
+CST.
+<PARSED TEXT FOR PAGE: 5 / 5>
+Evaluation priorities
+• Core logic and routing accuracy
+• Scale and performance
+• Edge case handling and system resilience
+• Dashboard usability and functionality
+• Presentation, system architecture, and live demonstration
+
+File Glossary
+The following supporting files will be provided separately. Teams should use them when
+building and evaluating their solutions.
+• problem_statement.pdf
+     ○ Purpose: The primary document outlining the challenge background, core logic
+     requirements, UI constraints, and expected deliverables.
+• scoring_logic_cheat_sheet.pdf
+     ○ Purpose: The business rules used to calculate priority scores, handle VIP overrides, and
+     route leads based on representative seniority.
+• data_dictionary.pdf
+     ○ Purpose: The schema guide detailing column names, data types, normalization
+     requirements (handling aliases and mixed casing), and expected values for both the leads
+     and representatives datasets.
+• assessment_rubric.pdf
+     ○ Purpose: The judging criteria used to evaluate core logic, system scale and performance,
+     edge case handling, UI execution, and the final presentation.
+• leads_sample.csv
+     ○ Purpose: A small dataset of prospective customers for initial development, testing, and
+     debugging of the routing logic.
+• reps_sample.csv
+     ○ Purpose: A small dataset of sales representatives to pair with leads_sample.csv for initial
+     testing and validation.
+• leads_scale.csv
+     ○ Purpose: A large dataset of 50,000 leads used for the Scale Challenge to test high-
+     volume processing without freezing.
+• reps_scale.csv
+     ○ Purpose: A larger directory of 1,600 representatives used with leads_scale.csv to test
+     capacity, load balancing, and round-robin distribution.
