@@ -1,0 +1,50 @@
+Text extracted from supplied assessment_rubric(1).pdf. Original formatting may differ.
+
+<PARSED TEXT FOR PAGE: 1 / 2>
+Judging Rubric (100 Total Points)
+
+1. Core Logic & Routing Accuracy (25 Points)
+
+   ●​ Does the engine successfully handle Data Quality by independently resolving messy
+      strings, casing, and aliases?
+   ●​ Are leads accurately scored and routed based on constraints like Region, Language,
+      Vertical, and the Seniority hierarchy?
+   ●​ Did the team implement a thoughtful, custom Tie-Breaker routing strategy (e.g.,
+      scheduling algorithms) rather than just dumping leads on the first match?
+   ●​ Bonus/Appreciation: Did the team go above and beyond by effectively integrating
+      machine learning models to enhance their logic, and such additions will be highly
+      appreciated by the judges.
+
+2. Scale & Performance (20 Points)
+
+   ●​ Does the strictly in-memory system successfully and rapidly process the 50,000+
+      record scale dataset?
+   ●​ Does the application remain stable and efficient without crashing or freezing during
+      the heavy data spike?
+
+3. Edge Cases & Resilience (15 Points)
+
+   ●​ Did the team design a logical, defensible fallback strategy for missing fields rather
+      than letting the system fail?
+   ●​ Are overflow leads (when all eligible reps hit maximum capacity) correctly caught and
+      routed to a visible manager review queue?
+   ●​ Did the team provide automated tests that successfully run and prove their system
+      handles anomalies gracefully?
+
+4. Dashboard & UI Execution (20 Points)
+
+   ●​ Does the dashboard demonstrate strong user empathy by presenting KPIs and queue
+      features (like sorting or filtering) that a manager actually needs?
+   ●​ Is the Rep Capacity effectively and visually tracked so workload limits are instantly
+      clear?
+   ●​ Do the core required action buttons function flawlessly, and did the team successfully
+      implement any valuable additional controls or functionalities to enhance the
+      dashboard?
+
+5. Presentation & System Blueprint (20 Points)
+<PARSED TEXT FOR PAGE: 2 / 2>
+●​ Does the architecture blueprint clearly and accurately map how data flows through
+   their system?
+●​ Did the team clearly articulate and defend their product decisions (fallback logic,
+   custom UI features, scoring adjustments, and routing algorithms)?
+●​ Was the live demonstration smooth, cohesive, and fully functional?
