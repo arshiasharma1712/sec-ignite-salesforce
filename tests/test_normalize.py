@@ -442,3 +442,12 @@ def test_range_size_uses_lower_end_and_is_logged():
     assert row["company_size"] == 500
     assert "size_interpreted" in row["flags"]
     assert any(w["field"] == "company_size" for w in warnings)
+
+
+def test_cleaned_reps_carry_original_column_names():
+    row, _ = one_rep(Seniority_Level="MGR", Max_Capacity="6", Region="Europ")
+    assert row["Seniority_Level"] == "Manager" == row["seniority"]
+    assert row["Max_Capacity"] == 6 == row["max_capacity"]
+    assert row["Region"] == "Europe" == row["region"]
+    for original in ("Rep_ID", "Name", "Language", "Industry_Vertical_Expertise", "Current_Capacity"):
+        assert original in row

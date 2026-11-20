@@ -33,6 +33,10 @@ Clean lead keys
 Clean rep keys
     rep_id, name, region, language, industry, seniority
     (seniority: "Junior" | "Senior" | "Manager" | "Unknown")
+    Rep_ID, Name, Region, Language, Industry_Vertical_Expertise, Seniority_Level,
+    Current_Capacity, Max_Capacity
+                     the same cleaned values under the original CSV column
+                     names, because src/routing.py reads those names
     current_capacity, max_capacity (ints; max_capacity falls back to 0)
     flags
 
@@ -144,6 +148,18 @@ LEAD_COLUMN_ALIASES = {
     "Company_Size": "company_size",
     "Recent_Activity": "recent_activity",
     "VIP_Referral": "vip",
+}
+
+# Same idea for reps: src/routing.py reads the original CSV column names.
+REP_COLUMN_ALIASES = {
+    "Rep_ID": "rep_id",
+    "Name": "name",
+    "Region": "region",
+    "Language": "language",
+    "Industry_Vertical_Expertise": "industry",
+    "Seniority_Level": "seniority",
+    "Current_Capacity": "current_capacity",
+    "Max_Capacity": "max_capacity",
 }
 
 OUTLIER_SIZE = 10_000_000
@@ -430,6 +446,10 @@ def normalize_reps(raw_reps, warnings):
                 "flags": flags,
             }
         )
+        # src/routing.py (Ethan) reads the original CSV column names.
+        row = cleaned[-1]
+        for original, clean in REP_COLUMN_ALIASES.items():
+            row[original] = row[clean]
     return cleaned
 
 
