@@ -15,7 +15,7 @@ from src.normalize import normalize_data  # noqa: E402
 ROOT = os.path.join(os.path.dirname(__file__), "..")
 LEAD_FIELDS = ["lead_id", "record_id", "company_name", "region", "language", "industry",
                "company_size", "company_size_label", "recent_activity", "vip", "vip_unknown", "flags"]
-REP_FIELDS = ["rep_id", "name", "region", "language", "industry", "seniority",
+REP_FIELDS = ["rep_id", "record_id", "name", "region", "language", "industry", "seniority",
               "current_capacity", "max_capacity", "flags"]
 
 

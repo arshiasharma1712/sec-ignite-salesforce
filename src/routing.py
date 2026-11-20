@@ -196,6 +196,8 @@ def route_leads(scored_leads: list[dict], reps: list[dict]) -> dict[str, Any]:
         rep_index = queue.popleft()
         rep = updated_reps[rep_index]
         rep["Current_Capacity"] += 1
+        if "current_capacity" in rep:
+            rep["current_capacity"] = rep["Current_Capacity"]
         if _has_capacity(rep):
             queue.append(rep_index)
         outcome.update(rep_id=rep["Rep_ID"], assignment_status="Assigned")

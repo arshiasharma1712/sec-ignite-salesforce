@@ -141,6 +141,19 @@ def test_fused_region_is_read_as_trailing_region_and_logged(raw, expected):
     assert rep_row["region"] == expected
 
 
+@pytest.mark.parametrize("identities", [["R-1", "R-1"], ["", None]])
+def test_fused_rep_regions_keep_identity_and_trace_warnings_by_record_id(identities):
+    _, rows, warnings = normalize_data([], [
+        rep(Rep_ID=value, Region="ASIA   PACIFICEurope") for value in identities
+    ])
+    assert [row["Rep_ID"] for row in rows] == [value or "" for value in identities]
+    assert len({row["record_id"] for row in rows}) == len(rows)
+    assert all(row["Region"] == "Europe" and "region_fused" in row["flags"] for row in rows)
+    assert [warning["id"] for warning in warnings if warning["action"] == "mapped_suffix"] == [
+        row["record_id"] for row in rows
+    ]
+
+
 def test_fused_region_policy_can_be_switched_to_unknown(monkeypatch):
     import src.normalize as module
 
@@ -336,6 +349,32 @@ def test_duplicate_lead_ids_are_kept_with_unique_record_ids():
 def test_missing_ids_get_generated_keys():
     leads, _, _ = normalize_data([lead(Lead_ID=""), lead(Lead_ID="")], [])
     assert len({l["record_id"] for l in leads}) == 2
+
+
+@pytest.mark.parametrize("raw_ids", [["R-1", " R-1 ", "R-2"], ["", None, "R-2"]])
+def test_normalization_preserves_rep_identity_separately_from_record_key(raw_ids):
+    _, cleaned, _ = normalize_data([], [rep(Rep_ID=value) for value in raw_ids])
+    expected = [value.strip() if value is not None else "" for value in raw_ids]
+    assert [row["rep_id"] for row in cleaned] == expected
+    assert [row["Rep_ID"] for row in cleaned] == expected
+    assert len({row["record_id"] for row in cleaned}) == len(raw_ids)
+    assert all("duplicate_or_missing_id" in row["flags"] for row in cleaned[:2])
+    assert "duplicate_or_missing_id" not in cleaned[2]["flags"]
+
+
+@pytest.mark.parametrize("entity", ["lead", "rep"])
+def test_generated_record_ids_do_not_collide_with_supplied_ids(entity):
+    prefix = "L" if entity == "lead" else "R"
+    missing_prefix = "MISSING-LEAD" if entity == "lead" else "MISSING-REP"
+    ids = [f"{prefix}-1", f"{prefix}-1", f"{prefix}-1#1", "", f"{missing_prefix}-4"]
+    if entity == "lead":
+        rows, _, _ = normalize_data([lead(Lead_ID=value) for value in ids], [])
+    else:
+        _, rows, _ = normalize_data([], [rep(Rep_ID=value) for value in ids])
+    assert len({row["record_id"] for row in rows}) == len(ids)
+    assert rows[2]["record_id"] == ids[2]
+    assert rows[4]["record_id"] == ids[4]
+    assert [row[f"{entity}_id"] for row in rows] == ids
 
 
 def test_inputs_are_not_mutated():

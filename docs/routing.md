@@ -31,17 +31,37 @@ make capacity accounting unreliable. Representative IDs are case-sensitive;
 outer whitespace is ignored for duplicate detection and ordering. Assigned
 `rep_id` retains the original `Rep_ID` value for joining to `updated_reps`.
 
+Normalization preserves that identity in both `rep_id` and `Rep_ID`, including
+duplicates and blank IDs. A separate `record_id` identifies each representative
+row, as it does for leads; generated row keys are never substituted for routing
+identities. Row keys cannot collide with supplied IDs or other generated keys.
+Duplicate/missing identity rows carry `duplicate_or_missing_id` in `flags` and
+remain visible, but routing excludes them. Normalization warnings use `record_id`
+for row references; routing warnings retain `source_index` and the supplied
+identity. The cleaned representative CSV export also includes `record_id`.
+This contract correction is recorded in
+[issue #3](https://github.com/Apickle47/sec-ignite-salesforce/issues/3#issuecomment-7051961836)
+and [issue #1](https://github.com/Apickle47/sec-ignite-salesforce/issues/1#issuecomment-7051962149).
+
 The normalizer must resolve aliases before routing. Comparisons trim outer
 whitespace and ignore case, but do not guess misspellings, abbreviations, or
 combined/ambiguous values. Canonical values are:
 
 - Region: `North America`, `Europe`, `Asia-Pacific`.
 - Language: `English`, `German`, `Spanish`.
-- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`.
+- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`, `Unknown`.
 - Seniority: `Junior`, `Senior`, `Manager`.
 
 For example, ` EUROPE ` matches `Europe`; `Europ`, `APAC`, `EN`, `sr`, and `MGR`
-need upstream normalization. Unknown values never match each other.
+need upstream normalization. Unknown region or language never matches another
+unknown value. The merged [industry policy in PR #12](https://github.com/Apickle47/sec-ignite-salesforce/pull/12)
+allows `Unknown` industry to match only `Unknown` industry; it is not a wildcard.
+
+The normalizer's merged [fused-region policy in PR #10](https://github.com/Apickle47/sec-ignite-salesforce/pull/10)
+maps the two recognized combined-region spellings to their trailing region,
+logging `mapped_suffix` and flagging `region_fused`. Its `FUSED_REGION_POLICY`
+switch can retain them as unknown instead. Routing itself still requires a
+canonical region and does not interpret raw combined-region strings.
 
 Scores must be integers from 0 through 100, excluding booleans. Priority must
 be uppercase and consistent with the baseline tiers: CRITICAL >=85, HIGH
@@ -125,6 +145,12 @@ representatives remain in the eligibility index to distinguish exhaustion from
 skill or seniority mismatch. Time is O(L log L + R log R) including sorting,
 with O(L + R) additional memory; there is no per-lead scan of all representatives.
 
+`Current_Capacity` is the authoritative routing count. When a normalized
+representative also has `current_capacity`, routing synchronizes that alias
+after each assignment so either field reports the same load to the dashboard.
+It copies the updated canonical value rather than incrementing both fields
+independently. Excluded representatives remain unchanged.
+
 Records are shallow-copied; routing never changes input dictionaries or nested
 metadata. Preserved nested metadata should be treated as read-only. There is no
 global/session state. Repeating the same baseline inputs reproduces outcomes
@@ -148,7 +174,8 @@ The 50,000-lead/1,600-representative test checks every assignment's eligibility,
 seniority, capacity accounting, traceability, and outcome conservation. It prints
 actual routing time without imposing a machine-dependent time limit.
 
-Measured on November 20, 2026:
+Initial implementation measurements on November 20, 2026, before the merged
+normalization integration fixes below:
 
 - Python 3.9.6, pytest 8.4.2, macOS 26.6.2, arm64.
 - Routing branch: **113 passed, 1 skipped**. The conditional scoring integration
@@ -169,6 +196,36 @@ scores 100/85/84/60/59/40/39/0. Every score-100 lead is a VIP.
 Timing measures only `route_leads`, excluding fixture construction and assertions.
 
 These are **synthetic routing-only measurements**, not a benchmark of the
-supplied CSVs or complete application. Normalization, CSV loading, dashboard
-rendering/reset controls, and the supplied-data end-to-end benchmark remain with
-their owners. No original challenge data has been changed.
+supplied CSVs or complete application. No original challenge data has been changed.
+
+### Merged-module regression verification
+
+After the capacity alias and representative identity corrections on November 20,
+2026, and integration of the merged policies from PRs #10 and #12, the complete
+repository suite passed: **371 tests**, with no skips.
+Eight focused regression cases failed before the fix and passed afterward.
+Coverage now includes normalization -> scoring -> routing for duplicate/missing
+representative IDs, row-key collisions, Critical and ordinary assignments,
+capacity aliases, immutable inputs, continued runs, and reset/repeat runs.
+Fused-region warnings also retain the correct row keys for duplicate/missing
+representative identities after the merge.
+Both supplied CSV pairs also run through the three modules in regression tests.
+
+A separate single-run measurement on Python 3.9.6, pytest 8.4.2, macOS 27.2.1
+arm64 produced:
+
+| Supplied dataset | Assigned | Manager Review | Full backend time | Routing time |
+| --- | --- | --- | --- | --- |
+| 100 leads / 10 reps | 9 | 91 | 0.007307 s | 0.000718 s |
+| 50,000 leads / 1,600 reps | 45,924 | 4,076 | 2.328497 s | 0.613991 s |
+
+Full backend time covers load -> normalize -> score -> route, excluding
+assertions and UI rendering. Assignment order, Manager Review reasons, and
+canonical representative loads match main commit `17ca59e` for both datasets,
+with **zero capacity-alias mismatches** and unique representative row keys.
+The increased scale assignment count compared with the earlier 35,525 comes
+from the team's merged fused-region and Unknown-industry policies. All rows are
+preserved and all assignment eligibility,
+seniority, capacity, and repeat-run invariants pass. This is a direct module
+chain, not validation of a dashboard or production pipeline entrypoint; those
+components and their benchmark tooling remain integration/dashboard work.
