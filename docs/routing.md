@@ -1,0 +1,174 @@
+# Routing contract and decisions
+
+Ethan owns `src/routing.py` and `tests/test_routing.py` on `feature/routing`.
+The routing proposal is recorded in [issue #1](https://github.com/Apickle47/sec-ignite-salesforce/issues/1#issuecomment-7050876459)
+and [issue #3](https://github.com/Apickle47/sec-ignite-salesforce/issues/3#issuecomment-7050876790).
+It targets the actual output of [scoring PR #6](https://github.com/Apickle47/sec-ignite-salesforce/pull/6).
+Normalization and pipeline integration must use this contract or coordinate changes in those issues.
+
+## Call and inputs
+
+```python
+from src.routing import route_leads
+
+results = route_leads(scored_leads, reps)
+```
+
+Both arguments are lists of dictionaries. Routing uses the standard library only
+and runs on Python 3.9+. It performs no file I/O and does not import scoring,
+normalization, pandas, or Streamlit.
+
+| Input | Required fields |
+| --- | --- |
+| Lead | `Region`, `Language`, `Industry_Vertical`, `score`, `priority`, `is_vip` |
+| Representative | `Rep_ID`, `Region`, `Language`, `Industry_Vertical_Expertise`, `Seniority_Level`, `Current_Capacity`, `Max_Capacity` |
+
+Lead IDs and other fields are preserved. Missing or duplicate lead IDs do not
+drop or collapse records: the original zero-based `source_index` traces each
+outcome back to its input row. Missing or duplicate representative IDs exclude
+all affected representatives because assigning to an ambiguous identity would
+make capacity accounting unreliable. Representative IDs are case-sensitive;
+outer whitespace is ignored for duplicate detection and ordering. Assigned
+`rep_id` retains the original `Rep_ID` value for joining to `updated_reps`.
+
+The normalizer must resolve aliases before routing. Comparisons trim outer
+whitespace and ignore case, but do not guess misspellings, abbreviations, or
+combined/ambiguous values. Canonical values are:
+
+- Region: `North America`, `Europe`, `Asia-Pacific`.
+- Language: `English`, `German`, `Spanish`.
+- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`.
+- Seniority: `Junior`, `Senior`, `Manager`.
+
+For example, ` EUROPE ` matches `Europe`; `Europ`, `APAC`, `EN`, `sr`, and `MGR`
+need upstream normalization. Unknown values never match each other.
+
+Scores must be integers from 0 through 100, excluding booleans. Priority must
+be uppercase and consistent with the baseline tiers: CRITICAL >=85, HIGH
+60-84, MEDIUM 40-59, LOW 0-39. `is_vip` must be a boolean; True requires
+100/CRITICAL. Routing validates this metadata without recalculating company,
+activity, or industry points. Scoring's `is_vip` is authoritative; routing does
+not reparse raw `VIP_Referral`. Existing scoring fallbacks remain on outcomes.
+
+Capacities must be integers, excluding booleans, and satisfy
+`0 <= Current_Capacity <= Max_Capacity`. Numeric strings, floats, negatives,
+missing values, and over-capacity rows are excluded with warnings. Zero maximum
+capacity is valid but full. Excluded representatives remain in `updated_reps`
+unchanged. A representative with several problems receives the first applicable
+warning: invalid record, invalid ID, duplicate ID, invalid skills, invalid
+seniority, then invalid capacity.
+
+## Return value
+
+| Key | Value |
+| --- | --- |
+| `assignments` | Assigned lead outcomes in routing order |
+| `updated_reps` | Copies of all representatives in original order, with updated capacities |
+| `overflow` | Manager Review lead outcomes in routing order |
+| `metrics` | Counts, assignment rate, and review reason counts described below |
+| `rep_warnings` | One dictionary per excluded representative: `source_index`, original `rep_id` (or None), and readable `reason` |
+
+Each outcome preserves its input fields and adds or replaces these reserved keys:
+
+| Key | Assigned | Manager Review |
+| --- | --- | --- |
+| `source_index` | Original zero-based lead position | Original zero-based lead position |
+| `rep_id` | Selected representative's `Rep_ID` | `None` |
+| `assignment_status` | `Assigned` | `Manager Review` |
+| `reason` | `None` | Readable review reason |
+
+`assignments` and `overflow` partition the input: every row appears exactly once.
+Each list preserves its relative routing order; concatenating the two lists does
+not reconstruct the globally interleaved queue. Malformed scored rows follow
+valid scored rows in original input order. Non-dictionary records are represented
+with `invalid_record=True` and a short `invalid_record_repr` rather than dropped.
+
+Metrics are `total_leads`, `assigned_count`, `manager_review_count`,
+`assignment_rate` (fraction 0-1, zero for empty input), `review_counts_by_reason`
+(mapping of the reason strings below to counts), and `excluded_rep_count`.
+
+| Review reason | Meaning |
+| --- | --- |
+| `Invalid lead record` | Non-record input or scoring flagged `invalid_record` |
+| `Invalid scoring metadata` | Missing, malformed, or contradictory score/priority/VIP metadata |
+| `Missing or invalid routing fields` | At least one lead matching field is unresolved |
+| `No matching representative` | No valid representative matches all three skills |
+| `No eligible Senior or Manager` | A Critical lead matches only valid Juniors |
+| `Eligible representatives at capacity` | Matching representatives of allowed seniority exist but are full |
+
+Invalid/excluded representatives do not establish eligibility. For example,
+matching only a representative with negative capacity produces `No matching
+representative`; the separate representative warning explains the exclusion.
+
+## Scheduling, fairness, and reset
+
+Lead order matches scoring PR #6 for valid scored records: tier, descending
+score, VIP first at equal score, lexicographic `Lead_ID`, then original input
+position. Missing IDs sort as empty strings. Invalid scoring data goes to review
+instead of using the scoring sort helper's permissive fallback ordering.
+
+Representatives are indexed by normalized `(Region, Language, Industry)` and
+ordered lexicographically by `Rep_ID` within each skill group. Critical leads
+use round-robin Senior queues, then Manager queues when no matching Senior has
+capacity, including when no Senior exists. Juniors never receive Critical leads.
+
+After every Critical lead has been processed, combined queues are built from
+remaining Junior, Senior, and Manager capacity. High, Medium, and Low leads
+use equal round-robin across all three seniorities, with no additional hierarchy.
+This balances new assignments among available peers; it does not equalize
+pre-existing loads or utilization percentages. That is a deliberate team choice,
+not a requirement imposed by the challenge.
+
+Every successful assignment increments capacity exactly once. Full
+representatives leave active queues immediately. Full but otherwise valid
+representatives remain in the eligibility index to distinguish exhaustion from
+skill or seniority mismatch. Time is O(L log L + R log R) including sorting,
+with O(L + R) additional memory; there is no per-lead scan of all representatives.
+
+Records are shallow-copied; routing never changes input dictionaries or nested
+metadata. Preserved nested metadata should be treated as read-only. There is no
+global/session state. Repeating the same baseline inputs reproduces outcomes
+and capacities; explicitly passing `updated_reps` starts from those newer loads.
+Dashboard Reset should discard results and reuse the original normalized
+representatives. Clearing dashboard state remains the dashboard owner's work.
+
+## Verification and measured performance
+
+Install pytest in your development environment, then run from the repository root:
+
+```sh
+python -m pip install pytest
+python -m pytest tests/test_routing.py -q
+```
+
+The suite covers strict matching, Critical seniority, round-robin and wraparound,
+independent groups, initial load and overflow, invalid data/capacities, duplicate
+identities, boundary scores, ordering, input preservation, and repeated/reset runs.
+The 50,000-lead/1,600-representative test checks every assignment's eligibility,
+seniority, capacity accounting, traceability, and outcome conservation. It prints
+actual routing time without imposing a machine-dependent time limit.
+
+Measured on November 20, 2026:
+
+- Python 3.9.6, pytest 8.4.2, macOS 26.6.2, arm64.
+- Routing branch: **113 passed, 1 skipped**. The conditional scoring integration
+  test skips until `src.scoring` is available.
+- A separate temporary checkout combined this routing code/tests with scoring
+  PR #6 at commit `3f8d1d5bf3086ccae97b0a52c1d8e3ce0fccb69f`: **265 passed**,
+  including the real scoring compatibility test and all 151 scoring tests.
+- Five sequential synthetic routing runs: **0.339442, 0.359432, 0.332718,
+  0.345427, 0.332095 seconds**; median **0.339442 seconds**. Each run received
+  the same baseline inputs and its invariants were verified after timing.
+- Each run assigned **43,300** leads and sent **6,700** to Manager Review for
+  exhausted capacity, with no excluded representatives (assignment rate 86.6%).
+
+The deterministic fixture is `scale_inputs()` in the routing test module. It
+spans all 45 skill combinations, cycles representative seniority and capacities
+(Junior 50 / Senior 25 / Manager 10), includes initial loads 0-3, and cycles
+scores 100/85/84/60/59/40/39/0. Every score-100 lead is a VIP.
+Timing measures only `route_leads`, excluding fixture construction and assertions.
+
+These are **synthetic routing-only measurements**, not a benchmark of the
+supplied CSVs or complete application. Normalization, CSV loading, dashboard
+rendering/reset controls, and the supplied-data end-to-end benchmark remain with
+their owners. No original challenge data has been changed.
