@@ -16,7 +16,7 @@ Clean lead keys
     language         "English" | "Spanish" | "German" | "Unknown"
     industry         "Technology" | "Healthcare" | "Finance" | "Manufacturing"
                      | "Retail" | "Unknown"
-    company_size     int >= 0, or None when missing/invalid/ambiguous (kept
+    company_size     int >= 0, or None when missing or invalid (kept
                      numeric-or-None so scoring can award the +20 missing bonus)
     company_size_label  the number as text, or "Unknown" when company_size is
                      None (for display)
@@ -25,6 +25,10 @@ Clean lead keys
     vip              bool
     vip_unknown      True when the raw value was Unknown/blank/unparseable
     flags            list of data-quality flag names for this record
+    Lead_ID, Company_Name, Region, Language, Industry_Vertical, Company_Size,
+    Recent_Activity, VIP_Referral
+                     the same cleaned values under the original CSV column
+                     names, because src/scoring.py reads those names
 
 Clean rep keys
     rep_id, name, region, language, industry, seniority
@@ -49,8 +53,8 @@ Policies (see also the warnings list, which logs every non-trivial fix):
     * VIP: True and False parse normally. Unknown, blank or unparseable is
       treated as False (never a free Critical) and flagged vip_unknown.
     * Company_Size: "1,000" -> 1000 and "5k" -> 5000 (both unambiguous
-      notation). A range ("500-1000"), negative, or text becomes None, which
-      the scoring layer treats as missing (+20).
+      notation). A range ("500-1000") uses its lower end, matching scoring.py.
+      A negative or text becomes None, which scoring treats as missing (+20).
     * Rep capacity: a negative max whose absolute value falls in the data
       dictionary's range for that seniority (Junior 40-50, Senior 20-25,
       Manager 5-10) is treated as a sign typo and flipped. In the supplied scale
@@ -122,12 +126,25 @@ FALSE_TOKENS = {"false", "f", "no", "n", "0"}
 _SIZE_PLAIN = re.compile(r"^\d+$")
 _SIZE_COMMAS = re.compile(r"^\d{1,3}(,\d{3})+$")
 _SIZE_K = re.compile(r"^(\d+(?:\.\d+)?)\s*k$", re.IGNORECASE)
-_SIZE_RANGE = re.compile(r"^\d[\d,]*\s*(?:-|to)\s*\d[\d,]*$", re.IGNORECASE)
+_SIZE_RANGE = re.compile(r"^(\d[\d,]*)\s*(?:-|to)\s*(\d[\d,]*)$", re.IGNORECASE)
 _INT = re.compile(r"^[+-]?\d+$")
 
 # Typical Max_Capacity ranges from the data dictionary. Used only to repair
 # negative values (see normalize_reps).
 CAPACITY_RANGES = {"Junior": (40, 50), "Senior": (20, 25), "Manager": (5, 10)}
+
+# Original CSV column name -> cleaned key. Added to every cleaned lead so the
+# scoring and routing modules can read either spelling.
+LEAD_COLUMN_ALIASES = {
+    "Lead_ID": "lead_id",
+    "Company_Name": "company_name",
+    "Region": "region",
+    "Language": "language",
+    "Industry_Vertical": "industry",
+    "Company_Size": "company_size",
+    "Recent_Activity": "recent_activity",
+    "VIP_Referral": "vip",
+}
 
 OUTLIER_SIZE = 10_000_000
 UNKNOWN = "Unknown"
@@ -175,7 +192,7 @@ def _alias(value, table, entity, record_id, field, warnings, flags):
 
 
 def parse_company_size(raw):
-    """Return (value, status). status: ok | missing | interpreted | ambiguous | invalid."""
+    """Return (value, status). status: ok | missing | interpreted | invalid."""
     text = _text(raw)
     low = text.lower()
     if low in MISSING_TOKENS:
@@ -187,8 +204,12 @@ def parse_company_size(raw):
     match = _SIZE_K.match(text)
     if match:
         return int(round(float(match.group(1)) * 1000)), "interpreted"
-    if _SIZE_RANGE.match(text):
-        return None, "ambiguous"
+    match = _SIZE_RANGE.match(text)
+    if match:
+        # Same policy as scoring.py (RANGE_POLICY = "lower"): credit only the
+        # size we are sure of, never Enterprise points on a maybe.
+        ends = [int(part.replace(",", "")) for part in match.groups()]
+        return min(ends), "interpreted"
     return None, "invalid"
 
 
@@ -251,7 +272,7 @@ def normalize_leads(raw_leads, warnings):
         size, status = parse_company_size(raw.get("Company_Size"))
         if status == "missing":
             flags.append("size_missing")
-        elif status in ("interpreted", "ambiguous", "invalid"):
+        elif status in ("interpreted", "invalid"):
             flags.append(f"size_{status}")
             _warn(
                 warnings,
@@ -261,8 +282,7 @@ def normalize_leads(raw_leads, warnings):
                 raw.get("Company_Size"),
                 "parsed" if status == "interpreted" else "set_none",
                 {
-                    "interpreted": f"read as {size}",
-                    "ambiguous": "range spans scoring tiers; treated as missing",
+                    "interpreted": f"read as {size} (5k style or lower end of a range)",
                     "invalid": "not a usable number; treated as missing",
                 }[status],
             )
@@ -324,6 +344,11 @@ def normalize_leads(raw_leads, warnings):
                 "flags": flags,
             }
         )
+        # scoring.py (Arshia) reads the original CSV column names, so every
+        # cleaned lead also carries them. Same values, one source of truth.
+        row = cleaned[-1]
+        for original, clean in LEAD_COLUMN_ALIASES.items():
+            row[original] = row[clean]
     return cleaned
 
 

@@ -169,7 +169,9 @@ def test_unrecognized_industry_becomes_none():
         ("0", 0, "ok"),
         ("5k", 5000, "interpreted"),
         ("2.5K", 2500, "interpreted"),
-        ("500-1000", None, "ambiguous"),
+        ("500-1000", 500, "interpreted"),
+        ("1,000 to 2,000", 1000, "interpreted"),
+        ("1000-500", 500, "interpreted"),
         ("-50", None, "invalid"),
         ("lots", None, "invalid"),
         ("", None, "missing"),
@@ -422,3 +424,21 @@ def test_scale_pair_loads_and_cleans_without_losing_records():
     assert all(r["seniority"] != "Unknown" for r in clean_reps)
     assert all(r["max_capacity"] > 0 for r in clean_reps)  # all 94 negatives are repairable
     assert all(0 <= r["current_capacity"] <= r["max_capacity"] for r in clean_reps)
+
+
+# ---------- compatibility with scoring.py ----------
+
+def test_cleaned_leads_carry_original_column_names():
+    row, _ = one_lead(VIP_Referral="True", Company_Size="1,000", Region=" EUROPE ")
+    assert row["VIP_Referral"] is True and row["vip"] is True
+    assert row["Company_Size"] == 1000 == row["company_size"]
+    assert row["Region"] == "Europe" == row["region"]
+    for original in ("Lead_ID", "Company_Name", "Language", "Industry_Vertical", "Recent_Activity"):
+        assert original in row
+
+
+def test_range_size_uses_lower_end_and_is_logged():
+    row, warnings = one_lead(Company_Size="500-1000")
+    assert row["company_size"] == 500
+    assert "size_interpreted" in row["flags"]
+    assert any(w["field"] == "company_size" for w in warnings)
