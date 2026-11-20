@@ -128,12 +128,46 @@ def test_seniority_aliases(raw, expected):
     assert one_rep(Seniority_Level=raw)[0]["seniority"] == expected
 
 
-def test_fused_region_is_not_guessed():
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("NORTH   AMERICA Asia-Pacific ", "Asia-Pacific"), ("ASIA   PACIFICEurope", "Europe")],
+)
+def test_fused_region_is_read_as_trailing_region_and_logged(raw, expected):
+    row, warnings = one_lead(Region=raw)
+    assert row["region"] == expected
+    assert "region_fused" in row["flags"]
+    assert any(w["field"] == "region" and w["action"] == "mapped_suffix" for w in warnings)
+    rep_row, _ = one_rep(Region=raw)
+    assert rep_row["region"] == expected
+
+
+@pytest.mark.parametrize("identities", [["R-1", "R-1"], ["", None]])
+def test_fused_rep_regions_keep_identity_and_trace_warnings_by_record_id(identities):
+    _, rows, warnings = normalize_data([], [
+        rep(Rep_ID=value, Region="ASIA   PACIFICEurope") for value in identities
+    ])
+    assert [row["Rep_ID"] for row in rows] == [value or "" for value in identities]
+    assert len({row["record_id"] for row in rows}) == len(rows)
+    assert all(row["Region"] == "Europe" and "region_fused" in row["flags"] for row in rows)
+    assert [warning["id"] for warning in warnings if warning["action"] == "mapped_suffix"] == [
+        row["record_id"] for row in rows
+    ]
+
+
+def test_fused_region_policy_can_be_switched_to_unknown(monkeypatch):
+    import src.normalize as module
+
+    monkeypatch.setattr(module, "FUSED_REGION_POLICY", "unknown")
     for raw in ["NORTH   AMERICA Asia-Pacific ", "ASIA   PACIFICEurope"]:
         row, warnings = one_lead(Region=raw)
         assert row["region"] == "Unknown"
         assert "region_unmapped" in row["flags"]
         assert any(w["field"] == "region" and w["action"] == "set_unknown" for w in warnings)
+
+
+def test_unrelated_region_text_is_still_unknown():
+    row, _ = one_lead(Region="Antarctica")
+    assert row["region"] == "Unknown"
 
 
 def test_unknown_language_and_seniority_become_none_with_warning():

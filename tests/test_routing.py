@@ -166,7 +166,7 @@ def test_order_priority_score_vip_lexicographic_id_and_original_position():
 
 
 @pytest.mark.parametrize("field", ["Region", "Language", "Industry_Vertical"])
-@pytest.mark.parametrize("value", [None, "", "Unknown", "n/a", 123, ["Europe"], float("nan")])
+@pytest.mark.parametrize("value", [None, "", "n/a", 123, ["Europe"], float("nan")])
 def test_unresolved_lead_fields_never_match_even_identical_rep_values(field, value):
     rep_field = "Industry_Vertical_Expertise" if field == "Industry_Vertical" else field
     result = route_leads([make_lead(**{field: value})], [make_rep(**{rep_field: value})])
@@ -463,3 +463,17 @@ def test_scale_50k_leads_1600_reps(capsys):
         print(f"\nSynthetic routing: {elapsed:.6f}s; Python {platform.python_version()}; "
               f"{platform.platform()}; assigned={len(result['assignments'])}; "
               f"review={len(result['overflow'])}")
+
+
+def test_unknown_industry_matches_only_unknown_industry():
+    unknown_rep = make_rep(**{"Industry_Vertical_Expertise": "Unknown"})
+    result = route_leads([make_lead(Industry_Vertical="Unknown")], [unknown_rep])
+    assert result["assignments"][0]["rep_id"] == "R-1"
+    result = route_leads([make_lead(Industry_Vertical="Unknown")], [make_rep()])
+    assert result["overflow"][0]["reason"] == "No matching representative"
+
+
+@pytest.mark.parametrize("field", ["Region", "Language"])
+def test_unknown_region_or_language_never_matches(field):
+    result = route_leads([make_lead(**{field: "Unknown"})], [make_rep(**{field: "Unknown"})])
+    assert result["overflow"][0]["reason"] == "Missing or invalid routing fields"

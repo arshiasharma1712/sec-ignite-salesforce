@@ -49,11 +49,19 @@ combined/ambiguous values. Canonical values are:
 
 - Region: `North America`, `Europe`, `Asia-Pacific`.
 - Language: `English`, `German`, `Spanish`.
-- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`.
+- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`, `Unknown`.
 - Seniority: `Junior`, `Senior`, `Manager`.
 
 For example, ` EUROPE ` matches `Europe`; `Europ`, `APAC`, `EN`, `sr`, and `MGR`
-need upstream normalization. Unknown values never match each other.
+need upstream normalization. Unknown region or language never matches another
+unknown value. The merged [industry policy in PR #12](https://github.com/Apickle47/sec-ignite-salesforce/pull/12)
+allows `Unknown` industry to match only `Unknown` industry; it is not a wildcard.
+
+The normalizer's merged [fused-region policy in PR #10](https://github.com/Apickle47/sec-ignite-salesforce/pull/10)
+maps the two recognized combined-region spellings to their trailing region,
+logging `mapped_suffix` and flagging `region_fused`. Its `FUSED_REGION_POLICY`
+switch can retain them as unknown instead. Routing itself still requires a
+canonical region and does not interpret raw combined-region strings.
 
 Scores must be integers from 0 through 100, excluding booleans. Priority must
 be uppercase and consistent with the baseline tiers: CRITICAL >=85, HIGH
@@ -193,11 +201,14 @@ supplied CSVs or complete application. No original challenge data has been chang
 ### Merged-module regression verification
 
 After the capacity alias and representative identity corrections on November 20,
-2026, the complete repository suite passed: **366 tests**, with no skips.
+2026, and integration of the merged policies from PRs #10 and #12, the complete
+repository suite passed: **371 tests**, with no skips.
 Eight focused regression cases failed before the fix and passed afterward.
 Coverage now includes normalization -> scoring -> routing for duplicate/missing
 representative IDs, row-key collisions, Critical and ordinary assignments,
 capacity aliases, immutable inputs, continued runs, and reset/repeat runs.
+Fused-region warnings also retain the correct row keys for duplicate/missing
+representative identities after the merge.
 Both supplied CSV pairs also run through the three modules in regression tests.
 
 A separate single-run measurement on Python 3.9.6, pytest 8.4.2, macOS 27.2.1
@@ -205,13 +216,16 @@ arm64 produced:
 
 | Supplied dataset | Assigned | Manager Review | Full backend time | Routing time |
 | --- | --- | --- | --- | --- |
-| 100 leads / 10 reps | 9 | 91 | 0.008513 s | 0.001535 s |
-| 50,000 leads / 1,600 reps | 35,525 | 14,475 | 2.320460 s | 0.594307 s |
+| 100 leads / 10 reps | 9 | 91 | 0.007307 s | 0.000718 s |
+| 50,000 leads / 1,600 reps | 45,924 | 4,076 | 2.328497 s | 0.613991 s |
 
 Full backend time covers load -> normalize -> score -> route, excluding
-assertions and UI rendering. Assignment/review totals are unchanged from the
-pre-fix supplied-data runs, with **zero capacity-alias mismatches** and unique
-representative row keys. All rows are preserved and all assignment eligibility,
+assertions and UI rendering. Assignment order, Manager Review reasons, and
+canonical representative loads match main commit `17ca59e` for both datasets,
+with **zero capacity-alias mismatches** and unique representative row keys.
+The increased scale assignment count compared with the earlier 35,525 comes
+from the team's merged fused-region and Unknown-industry policies. All rows are
+preserved and all assignment eligibility,
 seniority, capacity, and repeat-run invariants pass. This is a direct module
 chain, not validation of a dashboard or production pipeline entrypoint; those
 components and their benchmark tooling remain integration/dashboard work.
