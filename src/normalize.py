@@ -32,6 +32,10 @@ Clean lead keys
 
 Clean rep keys
     rep_id, name, region, language, industry, seniority
+    rep_id           original cleaned identity, including duplicates/blanks;
+                     never replaced by a generated row key
+    record_id        unique row key for traceability only, like lead record_id;
+                     routing must use Rep_ID/rep_id to validate rep identity
     (seniority: "Junior" | "Senior" | "Manager" | "Unknown")
     Rep_ID, Name, Region, Language, Industry_Vertical_Expertise, Seniority_Level,
     Current_Capacity, Max_Capacity
@@ -68,6 +72,8 @@ Policies (see also the warnings list, which logs every non-trivial fix):
       logged.
     * Duplicate Lead_IDs keep every row (they are different companies) and get
       distinct record_id values.
+    * Duplicate/missing Rep_IDs are preserved so routing can exclude them.
+      Separate record_id values identify the rows without inventing rep identities.
 """
 
 import re
@@ -245,24 +251,33 @@ def _parse_int(raw):
 
 
 def _unique_ids(ids, entity, warnings, fallback_prefix):
-    """Return a unique record key per row; duplicates get #1, #2 suffixes."""
+    """Unique row keys; generated keys cannot collide with supplied identities."""
     totals = {}
     for value in ids:
         totals[value] = totals.get(value, 0) + 1
+    reserved = set(ids) - {""}
     seen = {}
+    used = set()
     keys = []
     for position, value in enumerate(ids, start=1):
         if not value:
             key = f"{fallback_prefix}-{position}"
+        elif totals[value] == 1:
+            key = value
+        else:
+            seen[value] = seen.get(value, 0) + 1
+            key = f"{value}#{seen[value]}"
+
+        base, suffix = key, 1
+        while key in used or (key in reserved and key != value):
+            key = f"{base}#{suffix}"
+            suffix += 1
+        used.add(key)
+        keys.append(key)
+
+        if not value:
             _warn(warnings, entity, key, "id", value, "generated_id", "missing ID")
-            keys.append(key)
-            continue
-        if totals[value] == 1:
-            keys.append(value)
-            continue
-        seen[value] = seen.get(value, 0) + 1
-        key = f"{value}#{seen[value]}"
-        if seen[value] > 1:
+        elif totals[value] > 1 and seen[value] > 1:
             _warn(
                 warnings,
                 entity,
@@ -272,7 +287,6 @@ def _unique_ids(ids, entity, warnings, fallback_prefix):
                 "suffixed_id",
                 "duplicate ID shared by different records; kept both",
             )
-        keys.append(key)
     return keys
 
 
@@ -372,10 +386,12 @@ def normalize_reps(raw_reps, warnings):
     ids = [_text(r.get("Rep_ID")) for r in raw_reps]
     keys = _unique_ids(ids, "rep", warnings, "MISSING-REP")
     cleaned = []
-    for raw, rep_id in zip(raw_reps, keys):
+    for raw, rep_id, record_id in zip(raw_reps, ids, keys):
         flags = []
+        if record_id != rep_id:
+            flags.append("duplicate_or_missing_id")
 
-        seniority = _alias(raw.get("Seniority_Level"), SENIORITY_ALIASES, "rep", rep_id, "seniority", warnings, flags)
+        seniority = _alias(raw.get("Seniority_Level"), SENIORITY_ALIASES, "rep", record_id, "seniority", warnings, flags)
 
         max_cap = _parse_int(raw.get("Max_Capacity"))
         if max_cap is not None and max_cap < 0:
@@ -385,7 +401,7 @@ def normalize_reps(raw_reps, warnings):
                 _warn(
                     warnings,
                     "rep",
-                    rep_id,
+                    record_id,
                     "max_capacity",
                     raw.get("Max_Capacity"),
                     "sign_fixed",
@@ -399,7 +415,7 @@ def normalize_reps(raw_reps, warnings):
             _warn(
                 warnings,
                 "rep",
-                rep_id,
+                record_id,
                 "max_capacity",
                 raw.get("Max_Capacity"),
                 "set_zero",
@@ -413,7 +429,7 @@ def normalize_reps(raw_reps, warnings):
             _warn(
                 warnings,
                 "rep",
-                rep_id,
+                record_id,
                 "current_capacity",
                 raw.get("Current_Capacity"),
                 "set_zero",
@@ -425,7 +441,7 @@ def normalize_reps(raw_reps, warnings):
             _warn(
                 warnings,
                 "rep",
-                rep_id,
+                record_id,
                 "current_capacity",
                 raw.get("Current_Capacity"),
                 "clamped",
@@ -436,10 +452,11 @@ def normalize_reps(raw_reps, warnings):
         cleaned.append(
             {
                 "rep_id": rep_id,
+                "record_id": record_id,
                 "name": _text(raw.get("Name")),
-                "region": _alias(raw.get("Region"), REGION_ALIASES, "rep", rep_id, "region", warnings, flags),
-                "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "rep", rep_id, "language", warnings, flags),
-                "industry": _alias(raw.get("Industry_Vertical_Expertise"), INDUSTRY_ALIASES, "rep", rep_id, "industry", warnings, flags),
+                "region": _alias(raw.get("Region"), REGION_ALIASES, "rep", record_id, "region", warnings, flags),
+                "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "rep", record_id, "language", warnings, flags),
+                "industry": _alias(raw.get("Industry_Vertical_Expertise"), INDUSTRY_ALIASES, "rep", record_id, "industry", warnings, flags),
                 "seniority": seniority,
                 "current_capacity": current,
                 "max_capacity": max_cap,

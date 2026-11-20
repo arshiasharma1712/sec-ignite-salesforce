@@ -317,6 +317,32 @@ def test_missing_ids_get_generated_keys():
     assert len({l["record_id"] for l in leads}) == 2
 
 
+@pytest.mark.parametrize("raw_ids", [["R-1", " R-1 ", "R-2"], ["", None, "R-2"]])
+def test_normalization_preserves_rep_identity_separately_from_record_key(raw_ids):
+    _, cleaned, _ = normalize_data([], [rep(Rep_ID=value) for value in raw_ids])
+    expected = [value.strip() if value is not None else "" for value in raw_ids]
+    assert [row["rep_id"] for row in cleaned] == expected
+    assert [row["Rep_ID"] for row in cleaned] == expected
+    assert len({row["record_id"] for row in cleaned}) == len(raw_ids)
+    assert all("duplicate_or_missing_id" in row["flags"] for row in cleaned[:2])
+    assert "duplicate_or_missing_id" not in cleaned[2]["flags"]
+
+
+@pytest.mark.parametrize("entity", ["lead", "rep"])
+def test_generated_record_ids_do_not_collide_with_supplied_ids(entity):
+    prefix = "L" if entity == "lead" else "R"
+    missing_prefix = "MISSING-LEAD" if entity == "lead" else "MISSING-REP"
+    ids = [f"{prefix}-1", f"{prefix}-1", f"{prefix}-1#1", "", f"{missing_prefix}-4"]
+    if entity == "lead":
+        rows, _, _ = normalize_data([lead(Lead_ID=value) for value in ids], [])
+    else:
+        _, rows, _ = normalize_data([], [rep(Rep_ID=value) for value in ids])
+    assert len({row["record_id"] for row in rows}) == len(ids)
+    assert rows[2]["record_id"] == ids[2]
+    assert rows[4]["record_id"] == ids[4]
+    assert [row[f"{entity}_id"] for row in rows] == ids
+
+
 def test_inputs_are_not_mutated():
     raw_lead, raw_rep = lead(Region=" EUROPE "), rep(Max_Capacity="-1")
     before = (dict(raw_lead), dict(raw_rep))

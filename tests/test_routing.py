@@ -1,7 +1,8 @@
-"""Routing contract and business-rule tests; no CSV or dashboard dependencies."""
+"""Routing rules and normalization/scoring integration, including supplied CSVs."""
 from collections import Counter
 from copy import deepcopy
 from itertools import product
+from pathlib import Path
 import platform
 import time
 
@@ -41,6 +42,8 @@ def assert_invariants(result, leads, reps):
             continue
         assert after["Current_Capacity"] == before["Current_Capacity"] + counts[before["Rep_ID"]]
         assert after["Current_Capacity"] <= before["Max_Capacity"]
+        if "current_capacity" in before:
+            assert after["current_capacity"] == after["Current_Capacity"]
     by_id = {rep["Rep_ID"]: rep for i, rep in enumerate(reps) if i not in excluded}
     for row in result["assignments"]:
         assert row["assignment_status"] == "Assigned" and row["reason"] is None
@@ -340,6 +343,90 @@ def test_scoring_module_compatibility_when_available():
     assert [row["Lead_ID"] for row in result["assignments"]] == [row["Lead_ID"] for row in scoring.sort_for_routing(scored)]
     assert len(result["assignments"]) == 3
     assert_invariants(result, scored, [make_rep(seniority="Senior")])
+
+
+def test_normalized_capacity_alias_tracks_assignments_and_reset():
+    from src.normalize import normalize_data
+    from src.scoring import score_leads
+
+    raw_leads = [make_lead("vip", Company_Size="1", VIP_Referral="True"),
+                 make_lead("low", Company_Size="1", VIP_Referral="False")]
+    raw_reps = [make_rep("S", "sr", 2, 1), make_rep("J", "Jr", 1), make_rep("M", "MGR", 1)]
+    raw_before = deepcopy((raw_leads, raw_reps))
+    leads, reps, _ = normalize_data(raw_leads, raw_reps)
+    scored = score_leads(leads)
+    before = deepcopy((scored, reps))
+    result = route_leads(scored, reps)
+    assert [row["rep_id"] for row in result["assignments"]] == ["S", "J"]
+    assert_invariants(result, scored, reps)
+    assert (raw_leads, raw_reps) == raw_before
+    assert (scored, reps) == before
+    assert route_leads(scored, reps) == result
+    continued = route_leads([scored[1]], result["updated_reps"])
+    assert continued["assignments"][0]["rep_id"] == "M"
+    assert_invariants(continued, [scored[1]], result["updated_reps"])
+
+
+def test_normalized_capacity_alias_uses_authoritative_count():
+    rep = make_rep(capacity=5, current=2, current_capacity=99)
+    result = route_leads([make_lead()], [rep])
+    assert result["updated_reps"][0]["current_capacity"] == 3
+    assert result["updated_reps"][0]["Current_Capacity"] == 3
+    assert rep["current_capacity"] == 99 and rep["Current_Capacity"] == 2
+
+
+@pytest.mark.parametrize("raw_ids,reason", [
+    (["R-1", " R-1 "], "Duplicate Rep_ID"),
+    (["", None], "Missing or invalid Rep_ID"),
+])
+def test_normalized_bad_rep_ids_are_excluded_without_losing_rows(raw_ids, reason):
+    from src.normalize import normalize_data
+    from src.scoring import score_leads
+
+    raw_leads = [make_lead(str(i), Company_Size="1", VIP_Referral="False") for i in range(3)]
+    raw_reps = [make_rep(value, capacity=1) for value in raw_ids] + [make_rep("GOOD", capacity=1)]
+    leads, reps, _ = normalize_data(raw_leads, raw_reps)
+    scored = score_leads(leads)
+    result = route_leads(scored, reps)
+    assert [row["rep_id"] for row in result["assignments"]] == ["GOOD"]
+    assert result["rep_warnings"] == [
+        {"source_index": i, "rep_id": reps[i]["Rep_ID"], "reason": reason} for i in range(2)
+    ]
+    assert result["updated_reps"][:2] == reps[:2]
+    assert len(result["updated_reps"]) == 3
+    assert_invariants(result, scored, reps)
+    assert route_leads(scored, reps) == result
+
+
+def test_supplied_rep_ids_that_look_generated_remain_assignable():
+    from src.normalize import normalize_data
+    from src.scoring import score_leads
+
+    raw_leads = [make_lead(str(i), Company_Size="1", VIP_Referral="False") for i in range(2)]
+    raw_reps = [make_rep("R-1#1", capacity=1), make_rep("MISSING-REP-1", capacity=1)]
+    leads, reps, _ = normalize_data(raw_leads, raw_reps)
+    result = route_leads(score_leads(leads), reps)
+    assert {row["rep_id"] for row in result["assignments"]} == {"R-1#1", "MISSING-REP-1"}
+    assert not result["rep_warnings"]
+
+
+@pytest.mark.parametrize("size,lead_count,rep_count", [("sample", 100, 10), ("scale", 50_000, 1600)])
+def test_supplied_csvs_preserve_capacity_aliases_and_routing_invariants(size, lead_count, rep_count):
+    from src.data_loader import load_data
+    from src.normalize import normalize_data
+    from src.scoring import score_leads
+
+    data = Path(__file__).resolve().parents[1] / "data"
+    raw_leads, raw_reps = load_data(data / f"leads_{size}.csv", data / f"reps_{size}.csv")
+    leads, reps, _ = normalize_data(raw_leads, raw_reps)
+    scored = score_leads(leads)
+    before_reps = deepcopy(reps)
+    result = route_leads(scored, reps)
+    assert len(leads) == lead_count and len(result["updated_reps"]) == rep_count
+    assert_invariants(result, scored, reps)
+    assert reps == before_reps
+    assert all(row["Current_Capacity"] == row["current_capacity"] for row in result["updated_reps"])
+    assert route_leads(scored, reps) == result
 
 
 def scale_inputs():
