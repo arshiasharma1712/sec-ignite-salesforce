@@ -15,7 +15,7 @@ from typing import Any, Optional
 
 _REGIONS = {"north america", "europe", "asia-pacific"}
 _LANGUAGES = {"english", "german", "spanish"}
-_INDUSTRIES = {"technology", "healthcare", "finance", "manufacturing", "retail"}
+_INDUSTRIES = {"technology", "healthcare", "finance", "manufacturing", "retail", "unknown"}
 _SENIORITIES = {"junior", "senior", "manager"}
 _TIER_RANK = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
