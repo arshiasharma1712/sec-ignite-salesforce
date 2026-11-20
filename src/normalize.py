@@ -1,0 +1,425 @@
+"""Normalization and missing-value policies (owner: Arush).
+
+Contract:
+    normalize_data(raw_leads, raw_reps) -> (leads, reps, warnings)
+
+Input is the list[dict] of raw strings produced by data_loader.load_data.
+Inputs are never modified.
+
+Clean lead keys
+    lead_id          original ID as supplied
+    record_id        unique key for this row. Equals lead_id unless the ID
+                     appears more than once, then "L-1057#1", "L-1057#2".
+                     Use record_id wherever a unique key is needed.
+    company_name     whitespace-collapsed string
+    region           "North America" | "Europe" | "Asia-Pacific" | "Unknown"
+    language         "English" | "Spanish" | "German" | "Unknown"
+    industry         "Technology" | "Healthcare" | "Finance" | "Manufacturing"
+                     | "Retail" | "Unknown"
+    company_size     int >= 0, or None when missing/invalid/ambiguous (kept
+                     numeric-or-None so scoring can award the +20 missing bonus)
+    company_size_label  the number as text, or "Unknown" when company_size is
+                     None (for display)
+    recent_activity  canonical activity string, or "Unknown" (blank, N/A,
+                     or unrecognized). "Unknown" scores +0.
+    vip              bool
+    vip_unknown      True when the raw value was Unknown/blank/unparseable
+    flags            list of data-quality flag names for this record
+
+Clean rep keys
+    rep_id, name, region, language, industry, seniority
+    (seniority: "Junior" | "Senior" | "Manager" | "Unknown")
+    current_capacity, max_capacity (ints; max_capacity falls back to 0)
+    flags
+
+"Unknown" means "could not be read safely". The routing layer must NOT let an
+Unknown region, language or industry match a rep whose value is also Unknown
+unless the team decides so on purpose. A flag such as "region_unmapped" marks
+values that were unreadable (as opposed to supplied as "Unknown"). Route those
+to Manager Review with a reason so strict matching is never weakened. (see
+reason) so strict matching is never weakened.
+
+Policies (see also the warnings list, which logs every non-trivial fix):
+    * Case, surrounding whitespace, repeated spaces and . - _ separators are
+      normalized silently. Those are formatting noise, not guesses.
+    * Aliases come from explicit dictionaries below. Anything not in a
+      dictionary becomes "Unknown" with a warning. Fused values such as
+      "NORTH   AMERICA Asia-Pacific" are deliberately NOT mapped: they could
+      mean either region.
+    * VIP: True and False parse normally. Unknown, blank or unparseable is
+      treated as False (never a free Critical) and flagged vip_unknown.
+    * Company_Size: "1,000" -> 1000 and "5k" -> 5000 (both unambiguous
+      notation). A range ("500-1000"), negative, or text becomes None, which
+      the scoring layer treats as missing (+20).
+    * Rep capacity: a negative max whose absolute value falls in the data
+      dictionary's range for that seniority (Junior 40-50, Senior 20-25,
+      Manager 5-10) is treated as a sign typo and flipped. In the supplied scale
+      file all 94 negative values fit their range exactly. Any other negative
+      or non-numeric max becomes 0 (rep stays visible but can take nothing). A
+      bad current becomes 0. current > max is clamped to max. Every fix is
+      logged.
+    * Duplicate Lead_IDs keep every row (they are different companies) and get
+      distinct record_id values.
+"""
+
+import re
+
+REGION_ALIASES = {
+    "north america": "North America",
+    "na": "North America",
+    "north amer": "North America",
+    "nort america": "North America",
+    "europe": "Europe",
+    "eur": "Europe",
+    "europ": "Europe",
+    "asia pacific": "Asia-Pacific",
+    "apac": "Asia-Pacific",
+    "asa pacific": "Asia-Pacific",
+}
+
+LANGUAGE_ALIASES = {
+    "english": "English",
+    "en": "English",
+    "spanish": "Spanish",
+    "es": "Spanish",
+    "german": "German",
+    "de": "German",
+}
+
+INDUSTRY_ALIASES = {
+    "technology": "Technology",
+    "healthcare": "Healthcare",
+    "finance": "Finance",
+    "manufacturing": "Manufacturing",
+    "retail": "Retail",
+    "unknown": "Unknown",
+}
+
+SENIORITY_ALIASES = {
+    "junior": "Junior",
+    "jr": "Junior",
+    "senior": "Senior",
+    "sr": "Senior",
+    "manager": "Manager",
+    "mgr": "Manager",
+}
+
+ACTIVITY_ALIASES = {
+    "requested live demo": "Requested Live Demo",
+    "contact sales": "Contact Sales",
+    "attended webinar": "Attended Webinar",
+    "downloaded whitepaper": "Downloaded Whitepaper",
+    "visited pricing page": "Visited Pricing Page",
+    "opened marketing email": "Opened Marketing Email",
+    "subscribed to blog": "Subscribed to Blog",
+    "started free trial": "Started Free Trial",
+}
+
+MISSING_TOKENS = {"", "none", "null", "n/a", "na", "nan", "unknown", "-"}
+TRUE_TOKENS = {"true", "t", "yes", "y", "1"}
+FALSE_TOKENS = {"false", "f", "no", "n", "0"}
+
+_SIZE_PLAIN = re.compile(r"^\d+$")
+_SIZE_COMMAS = re.compile(r"^\d{1,3}(,\d{3})+$")
+_SIZE_K = re.compile(r"^(\d+(?:\.\d+)?)\s*k$", re.IGNORECASE)
+_SIZE_RANGE = re.compile(r"^\d[\d,]*\s*(?:-|to)\s*\d[\d,]*$", re.IGNORECASE)
+_INT = re.compile(r"^[+-]?\d+$")
+
+# Typical Max_Capacity ranges from the data dictionary. Used only to repair
+# negative values (see normalize_reps).
+CAPACITY_RANGES = {"Junior": (40, 50), "Senior": (20, 25), "Manager": (5, 10)}
+
+OUTLIER_SIZE = 10_000_000
+UNKNOWN = "Unknown"
+
+
+def _text(value):
+    """Raw cell to a whitespace-collapsed string (None -> '')."""
+    return " ".join(str(value).split()) if value is not None else ""
+
+
+def _key(value):
+    """Lookup key: lowercase, separators to spaces, whitespace collapsed."""
+    return " ".join(re.sub(r"[.\-_/]", " ", _text(value)).lower().split())
+
+
+def _warn(warnings, entity, record_id, field, raw, action, message):
+    warnings.append(
+        {
+            "entity": entity,
+            "id": record_id,
+            "field": field,
+            "raw": raw,
+            "action": action,
+            "message": message,
+        }
+    )
+
+
+def _alias(value, table, entity, record_id, field, warnings, flags):
+    """Map a value through an alias table. Unmapped becomes "Unknown" and is logged."""
+    key = _key(value)
+    if key in table:
+        return table[key]
+    flags.append(f"{field}_unmapped")
+    _warn(
+        warnings,
+        entity,
+        record_id,
+        field,
+        value,
+        "set_unknown",
+        "blank value" if key == "" else "value not in alias table (not guessed)",
+    )
+    return UNKNOWN
+
+
+def parse_company_size(raw):
+    """Return (value, status). status: ok | missing | interpreted | ambiguous | invalid."""
+    text = _text(raw)
+    low = text.lower()
+    if low in MISSING_TOKENS:
+        return None, "missing"
+    if _SIZE_PLAIN.match(text):
+        return int(text), "ok"
+    if _SIZE_COMMAS.match(text):
+        return int(text.replace(",", "")), "ok"
+    match = _SIZE_K.match(text)
+    if match:
+        return int(round(float(match.group(1)) * 1000)), "interpreted"
+    if _SIZE_RANGE.match(text):
+        return None, "ambiguous"
+    return None, "invalid"
+
+
+def parse_vip(raw):
+    """Return (vip, unknown). Unknown or unparseable is (False, True)."""
+    low = _text(raw).lower()
+    if low in TRUE_TOKENS:
+        return True, False
+    if low in FALSE_TOKENS:
+        return False, False
+    return False, True
+
+
+def _parse_int(raw):
+    text = _text(raw)
+    return int(text) if _INT.match(text) else None
+
+
+def _unique_ids(ids, entity, warnings, fallback_prefix):
+    """Return a unique record key per row; duplicates get #1, #2 suffixes."""
+    totals = {}
+    for value in ids:
+        totals[value] = totals.get(value, 0) + 1
+    seen = {}
+    keys = []
+    for position, value in enumerate(ids, start=1):
+        if not value:
+            key = f"{fallback_prefix}-{position}"
+            _warn(warnings, entity, key, "id", value, "generated_id", "missing ID")
+            keys.append(key)
+            continue
+        if totals[value] == 1:
+            keys.append(value)
+            continue
+        seen[value] = seen.get(value, 0) + 1
+        key = f"{value}#{seen[value]}"
+        if seen[value] > 1:
+            _warn(
+                warnings,
+                entity,
+                key,
+                "id",
+                value,
+                "suffixed_id",
+                "duplicate ID shared by different records; kept both",
+            )
+        keys.append(key)
+    return keys
+
+
+def normalize_leads(raw_leads, warnings):
+    ids = [_text(r.get("Lead_ID")) for r in raw_leads]
+    keys = _unique_ids(ids, "lead", warnings, "MISSING-LEAD")
+    cleaned = []
+    for raw, lead_id, record_id in zip(raw_leads, ids, keys):
+        flags = []
+        if record_id != lead_id:
+            flags.append("duplicate_or_missing_id")
+
+        size, status = parse_company_size(raw.get("Company_Size"))
+        if status == "missing":
+            flags.append("size_missing")
+        elif status in ("interpreted", "ambiguous", "invalid"):
+            flags.append(f"size_{status}")
+            _warn(
+                warnings,
+                "lead",
+                record_id,
+                "company_size",
+                raw.get("Company_Size"),
+                "parsed" if status == "interpreted" else "set_none",
+                {
+                    "interpreted": f"read as {size}",
+                    "ambiguous": "range spans scoring tiers; treated as missing",
+                    "invalid": "not a usable number; treated as missing",
+                }[status],
+            )
+        if size is not None and size > OUTLIER_SIZE:
+            flags.append("size_outlier")
+            _warn(
+                warnings,
+                "lead",
+                record_id,
+                "company_size",
+                raw.get("Company_Size"),
+                "kept",
+                "implausibly large; kept as supplied",
+            )
+
+        vip, vip_unknown = parse_vip(raw.get("VIP_Referral"))
+        if vip_unknown:
+            flags.append("vip_unknown")
+            _warn(
+                warnings,
+                "lead",
+                record_id,
+                "vip_referral",
+                raw.get("VIP_Referral"),
+                "set_false",
+                "Unknown/blank VIP treated as False (conservative)",
+            )
+
+        activity_key = _key(raw.get("Recent_Activity"))
+        if activity_key in ACTIVITY_ALIASES:
+            activity = ACTIVITY_ALIASES[activity_key]
+        else:
+            activity = UNKNOWN
+            if _text(raw.get("Recent_Activity")).lower() not in MISSING_TOKENS:
+                flags.append("activity_unmapped")
+                _warn(
+                    warnings,
+                    "lead",
+                    record_id,
+                    "recent_activity",
+                    raw.get("Recent_Activity"),
+                    "set_unknown",
+                    "unrecognized activity; scores +0",
+                )
+
+        cleaned.append(
+            {
+                "lead_id": lead_id,
+                "record_id": record_id,
+                "company_name": _text(raw.get("Company_Name")),
+                "region": _alias(raw.get("Region"), REGION_ALIASES, "lead", record_id, "region", warnings, flags),
+                "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "lead", record_id, "language", warnings, flags),
+                "industry": _alias(raw.get("Industry_Vertical"), INDUSTRY_ALIASES, "lead", record_id, "industry", warnings, flags),
+                "company_size": size,
+                "company_size_label": str(size) if size is not None else UNKNOWN,
+                "recent_activity": activity,
+                "vip": vip,
+                "vip_unknown": vip_unknown,
+                "flags": flags,
+            }
+        )
+    return cleaned
+
+
+def normalize_reps(raw_reps, warnings):
+    ids = [_text(r.get("Rep_ID")) for r in raw_reps]
+    keys = _unique_ids(ids, "rep", warnings, "MISSING-REP")
+    cleaned = []
+    for raw, rep_id in zip(raw_reps, keys):
+        flags = []
+
+        seniority = _alias(raw.get("Seniority_Level"), SENIORITY_ALIASES, "rep", rep_id, "seniority", warnings, flags)
+
+        max_cap = _parse_int(raw.get("Max_Capacity"))
+        if max_cap is not None and max_cap < 0:
+            low, high = CAPACITY_RANGES.get(seniority, (None, None))
+            if low is not None and low <= -max_cap <= high:
+                flags.append("max_capacity_sign_fixed")
+                _warn(
+                    warnings,
+                    "rep",
+                    rep_id,
+                    "max_capacity",
+                    raw.get("Max_Capacity"),
+                    "sign_fixed",
+                    f"negative max; its absolute value {-max_cap} fits the "
+                    f"{seniority} range in the data dictionary, so the sign was "
+                    "treated as a typo",
+                )
+                max_cap = -max_cap
+        if max_cap is None or max_cap < 0:
+            flags.append("max_capacity_invalid")
+            _warn(
+                warnings,
+                "rep",
+                rep_id,
+                "max_capacity",
+                raw.get("Max_Capacity"),
+                "set_zero",
+                "negative or non-numeric max with no safe repair; rep kept with capacity 0",
+            )
+            max_cap = 0
+
+        current = _parse_int(raw.get("Current_Capacity"))
+        if current is None or current < 0:
+            flags.append("current_capacity_invalid")
+            _warn(
+                warnings,
+                "rep",
+                rep_id,
+                "current_capacity",
+                raw.get("Current_Capacity"),
+                "set_zero",
+                "negative or non-numeric current load; set to 0",
+            )
+            current = 0
+        if current > max_cap:
+            flags.append("current_over_max")
+            _warn(
+                warnings,
+                "rep",
+                rep_id,
+                "current_capacity",
+                raw.get("Current_Capacity"),
+                "clamped",
+                f"current exceeded max; clamped to {max_cap}",
+            )
+            current = max_cap
+
+        cleaned.append(
+            {
+                "rep_id": rep_id,
+                "name": _text(raw.get("Name")),
+                "region": _alias(raw.get("Region"), REGION_ALIASES, "rep", rep_id, "region", warnings, flags),
+                "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "rep", rep_id, "language", warnings, flags),
+                "industry": _alias(raw.get("Industry_Vertical_Expertise"), INDUSTRY_ALIASES, "rep", rep_id, "industry", warnings, flags),
+                "seniority": seniority,
+                "current_capacity": current,
+                "max_capacity": max_cap,
+                "flags": flags,
+            }
+        )
+    return cleaned
+
+
+def normalize_data(raw_leads, raw_reps):
+    """Clean both datasets. Returns (leads, reps, warnings)."""
+    warnings = []
+    leads = normalize_leads(raw_leads or [], warnings)
+    reps = normalize_reps(raw_reps or [], warnings)
+    return leads, reps, warnings
+
+
+def summarize_warnings(warnings):
+    """Count warnings by (entity, field, action) for dashboards and the README."""
+    counts = {}
+    for item in warnings:
+        key = (item["entity"], item["field"], item["action"])
+        counts[key] = counts.get(key, 0) + 1
+    return counts
