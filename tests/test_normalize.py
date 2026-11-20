@@ -128,12 +128,33 @@ def test_seniority_aliases(raw, expected):
     assert one_rep(Seniority_Level=raw)[0]["seniority"] == expected
 
 
-def test_fused_region_is_not_guessed():
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("NORTH   AMERICA Asia-Pacific ", "Asia-Pacific"), ("ASIA   PACIFICEurope", "Europe")],
+)
+def test_fused_region_is_read_as_trailing_region_and_logged(raw, expected):
+    row, warnings = one_lead(Region=raw)
+    assert row["region"] == expected
+    assert "region_fused" in row["flags"]
+    assert any(w["field"] == "region" and w["action"] == "mapped_suffix" for w in warnings)
+    rep_row, _ = one_rep(Region=raw)
+    assert rep_row["region"] == expected
+
+
+def test_fused_region_policy_can_be_switched_to_unknown(monkeypatch):
+    import src.normalize as module
+
+    monkeypatch.setattr(module, "FUSED_REGION_POLICY", "unknown")
     for raw in ["NORTH   AMERICA Asia-Pacific ", "ASIA   PACIFICEurope"]:
         row, warnings = one_lead(Region=raw)
         assert row["region"] == "Unknown"
         assert "region_unmapped" in row["flags"]
         assert any(w["field"] == "region" and w["action"] == "set_unknown" for w in warnings)
+
+
+def test_unrelated_region_text_is_still_unknown():
+    row, _ = one_lead(Region="Antarctica")
+    assert row["region"] == "Unknown"
 
 
 def test_unknown_language_and_seniority_become_none_with_warning():
