@@ -64,6 +64,8 @@ Policies (see also the warnings list, which logs every non-trivial fix):
     * Company_Size: "1,000" -> 1000 and "5k" -> 5000 (both unambiguous
       notation). A range ("500-1000") uses its lower end, matching scoring.py.
       A negative or text becomes None, which scoring treats as missing (+20).
+      Overflow in k notation also becomes None with an invalid-size warning,
+      so one unrepresentable value cannot abort the batch.
     * Rep capacity: a negative max whose absolute value falls in the data
       dictionary's range for that seniority (Junior 40-50, Senior 20-25,
       Manager 5-10) is treated as a sign typo and flipped. In the supplied scale
@@ -259,7 +261,10 @@ def parse_company_size(raw):
         return int(text.replace(",", "")), "ok"
     match = _SIZE_K.match(text)
     if match:
-        return int(round(float(match.group(1)) * 1000)), "interpreted"
+        try:
+            return int(round(float(match.group(1)) * 1000)), "interpreted"
+        except (OverflowError, ValueError):
+            return None, "invalid"
     match = _SIZE_RANGE.match(text)
     if match:
         # Same policy as scoring.py (RANGE_POLICY = "lower"): credit only the

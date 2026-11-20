@@ -218,6 +218,53 @@ def test_parse_company_size(raw, value, status):
     assert parse_company_size(raw) == (value, status)
 
 
+@pytest.mark.parametrize("raw", [
+    "9" * 309 + "k",          # The number itself exceeds the float range.
+    "9" * 306 + "k",          # Finite until multiplied by 1,000.
+    "9" * 309 + ".5K",        # Decimal and uppercase abbreviation.
+    "  " + "9" * 309 + " K ", # Whitespace normalization still reaches the guard.
+], ids=["float-overflow", "multiplication-overflow", "decimal-uppercase", "whitespace"])
+def test_overflowing_company_size_is_invalid_instead_of_raising(raw):
+    assert parse_company_size(raw) == (None, "invalid")
+    row, warnings = one_lead(Company_Size=raw)
+    assert row["company_size"] is None and row["Company_Size"] is None
+    assert row["company_size_label"] == "Unknown"
+    assert "size_invalid" in row["flags"]
+    assert any(w["field"] == "company_size" and w["action"] == "set_none" and w["raw"] == raw
+               for w in warnings)
+
+
+def test_overflowing_size_does_not_abort_batch_or_vip_routing():
+    from copy import deepcopy
+    from src.routing import route_leads
+    from src.scoring import score_leads
+
+    oversized = "9" * 309 + "k"
+    raw_leads = [
+        lead(Lead_ID="before"),
+        lead(Lead_ID="overflow", Company_Size=oversized),
+        lead(Lead_ID="vip", Company_Size=oversized, VIP_Referral="True"),
+        lead(Lead_ID="after", Company_Size="5k"),
+    ]
+    raw_reps = [rep(Max_Capacity="4")]
+    before = deepcopy((raw_leads, raw_reps))
+    leads, reps, warnings = normalize_data(raw_leads, raw_reps)
+    assert [row["Lead_ID"] for row in leads] == ["before", "overflow", "vip", "after"]
+    assert (raw_leads, raw_reps) == before
+    assert {w["id"] for w in warnings if w["field"] == "company_size" and w["action"] == "set_none"} == {"overflow", "vip"}
+    scored = score_leads(leads)
+    by_id = {row["Lead_ID"]: row for row in scored}
+    assert by_id["overflow"]["size_points"] == 20
+    assert (by_id["vip"]["score"], by_id["vip"]["priority"]) == (100, "CRITICAL")
+    result = route_leads(scored, reps)
+    assert len(result["assignments"]) == len(raw_leads)
+    assert not result["overflow"]
+    assert result["assignments"][0]["Lead_ID"] == "vip"
+    assert sorted(row["source_index"] for row in result["assignments"]) == list(range(4))
+    assert result["updated_reps"][0]["Current_Capacity"] == 4
+    assert result["updated_reps"][0]["current_capacity"] == 4
+
+
 def test_missing_size_is_none_and_flagged_without_noise():
     row, warnings = one_lead(Company_Size="None")
     assert row["company_size"] is None
