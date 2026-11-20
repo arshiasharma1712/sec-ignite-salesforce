@@ -51,9 +51,11 @@ Policies (see also the warnings list, which logs every non-trivial fix):
     * Case, surrounding whitespace, repeated spaces and . - _ separators are
       normalized silently. Those are formatting noise, not guesses.
     * Aliases come from explicit dictionaries below. Anything not in a
-      dictionary becomes "Unknown" with a warning. Fused values such as
-      "NORTH   AMERICA Asia-Pacific" are deliberately NOT mapped: they could
-      mean either region.
+      dictionary becomes "Unknown" with a warning.
+    * Fused regions ("NORTH   AMERICA Asia-Pacific", "ASIA   PACIFICEurope")
+      are read as the trailing region, logged as mapped_suffix and flagged
+      region_fused. The evidence is in the comment above FUSED_REGION_ALIASES.
+      Set FUSED_REGION_POLICY = "unknown" to treat them as unreadable instead.
     * VIP: True and False parse normally. Unknown, blank or unparseable is
       treated as False (never a free Critical) and flagged vip_unknown.
     * Company_Size: "1,000" -> 1000 and "5k" -> 5000 (both unambiguous
@@ -162,6 +164,21 @@ REP_COLUMN_ALIASES = {
     "Max_Capacity": "max_capacity",
 }
 
+# Fused regions. Two spellings in the data look like two region names glued
+# together: "NORTH   AMERICA Asia-Pacific" and "ASIA   PACIFICEurope". Evidence
+# for reading each as the region at the END of the string: in both the leads and
+# the reps, every region has exactly five spellings, and only with these two
+# counted as "Asia-Pacific" and "Europe" does each region reach five, each at
+# the same frequency (about 6.6% of rows). The leading words look like injected
+# noise. This is an inference from the data, not something the data dictionary
+# states, so it is a switch: set FUSED_REGION_POLICY = "unknown" to stop guessing
+# and send those rows to Manager Review instead.
+FUSED_REGION_ALIASES = {
+    "north america asia pacific": "Asia-Pacific",
+    "asia pacificeurope": "Europe",
+}
+FUSED_REGION_POLICY = "suffix"  # "suffix" or "unknown"
+
 OUTLIER_SIZE = 10_000_000
 UNKNOWN = "Unknown"
 
@@ -205,6 +222,24 @@ def _alias(value, table, entity, record_id, field, warnings, flags):
         "blank value" if key == "" else "value not in alias table (not guessed)",
     )
     return UNKNOWN
+
+
+def _region(value, entity, record_id, warnings, flags):
+    """Region alias lookup, plus the fused-region policy (see FUSED_REGION_*)."""
+    key = _key(value)
+    if key not in REGION_ALIASES and FUSED_REGION_POLICY == "suffix" and key in FUSED_REGION_ALIASES:
+        flags.append("region_fused")
+        _warn(
+            warnings,
+            entity,
+            record_id,
+            "region",
+            value,
+            "mapped_suffix",
+            f"two region names joined; read as the trailing one, {FUSED_REGION_ALIASES[key]}",
+        )
+        return FUSED_REGION_ALIASES[key]
+    return _alias(value, REGION_ALIASES, entity, record_id, "region", warnings, flags)
 
 
 def parse_company_size(raw):
@@ -349,7 +384,7 @@ def normalize_leads(raw_leads, warnings):
                 "lead_id": lead_id,
                 "record_id": record_id,
                 "company_name": _text(raw.get("Company_Name")),
-                "region": _alias(raw.get("Region"), REGION_ALIASES, "lead", record_id, "region", warnings, flags),
+                "region": _region(raw.get("Region"), "lead", record_id, warnings, flags),
                 "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "lead", record_id, "language", warnings, flags),
                 "industry": _alias(raw.get("Industry_Vertical"), INDUSTRY_ALIASES, "lead", record_id, "industry", warnings, flags),
                 "company_size": size,
@@ -437,7 +472,7 @@ def normalize_reps(raw_reps, warnings):
             {
                 "rep_id": rep_id,
                 "name": _text(raw.get("Name")),
-                "region": _alias(raw.get("Region"), REGION_ALIASES, "rep", rep_id, "region", warnings, flags),
+                "region": _region(raw.get("Region"), "rep", rep_id, warnings, flags),
                 "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "rep", rep_id, "language", warnings, flags),
                 "industry": _alias(raw.get("Industry_Vertical_Expertise"), INDUSTRY_ALIASES, "rep", rep_id, "industry", warnings, flags),
                 "seniority": seniority,
