@@ -7,7 +7,6 @@ dashboard_helpers.py, and the routing logic lives in the team's pipeline.
 """
 
 import sys
-import tempfile
 from pathlib import Path
 
 from datetime import datetime
@@ -16,7 +15,8 @@ import pandas as pd
 import streamlit as st
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # repo root, so the team's src/pipeline.py can be found
+for _p in (HERE, HERE.parent):  # the repo root, wherever this file sits, so src/pipeline.py can be found
+    sys.path.insert(0, str(_p))
 
 import dashboard_helpers as H
 
@@ -31,11 +31,14 @@ except ModuleNotFoundError as error:
     from dev_only.pipeline_stub import run_pipeline
     PIPELINE_NAME = "demo pipeline"
 
-DATA_DIR = H.find_data_dir(HERE)  # the team's CSVs (see README: where the data goes)
-DATASETS = {
+DATA_DIR = HERE / "data"
+# the team's CSVs, found by name (leads/reps + sample/scale); missing pairs give a plain "file not found" message
+DATASETS = H.find_datasets(HERE) or {
     "Sample (100 leads)": ("leads_sample.csv", "reps_sample.csv"),
     "Scale (50,000 leads)": ("leads_scale.csv", "reps_scale.csv"),
 }
+DATASETS.setdefault("Sample (100 leads)", ("leads_sample.csv", "reps_sample.csv"))
+DATASETS.setdefault("Scale (50,000 leads)", ("leads_scale.csv", "reps_scale.csv"))
 PAGE_SIZES = [25, 50, 100]
 CAND_PAGE = 10  # reps shown per page in the manager-action list
 # the ☰ Settings menu: key -> starting value
@@ -49,20 +52,12 @@ st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️
 
 
 # ---------------------------------------------------------------- state ----
-LIVE_LABEL = "Live link"
-
-
 def source_paths(label):
-    """(leads CSV path, reps CSV path, fingerprint) for a dataset. For the live link the sheets are downloaded
-    into a temporary folder first; the fingerprint changes whenever someone edits the sheet or file."""
-    if label == LIVE_LABEL:
-        folder = Path(st.session_state.setdefault("live_dir", tempfile.mkdtemp(prefix="ignite_live_")))
-        leads, reps = folder / "leads.csv", folder / "reps.csv"
-        sig = (H.download_csv(st.session_state.get("live_leads_url"), leads, "lead_id"),
-               H.download_csv(st.session_state.get("live_reps_url"), reps, "rep_id"))
-        return str(leads), str(reps), sig
+    """(leads CSV path, reps CSV path, fingerprint) for a dataset. The fingerprint changes whenever
+    someone edits the CSV files, so the dashboard can refresh itself."""
     leads_file, reps_file = DATASETS[label]
-    paths = [DATA_DIR / leads_file, DATA_DIR / reps_file]
+    paths = [Path(leads_file) if Path(leads_file).is_absolute() else DATA_DIR / leads_file,
+             Path(reps_file) if Path(reps_file).is_absolute() else DATA_DIR / reps_file]
     return str(paths[0]), str(paths[1]), H.file_signature(paths)
 
 
@@ -107,9 +102,7 @@ def run_dataset(label, keep_view=False):
         st.session_state.dataset = label
         st.session_state.error = None
     except FileNotFoundError as error:
-        st.session_state.error = f"Could not find {Path(error.filename or '').name}. Put the CSVs in the data/ folder."
-    except ValueError as error:  # a bad live link: say what to fix
-        st.session_state.error = str(error)
+        st.session_state.error = f"Could not find {Path(error.filename or '').name}. Put the team's CSVs in the repo's data/ folder."
     except Exception as error:  # keep the demo alive and show what happened
         st.session_state.error = f"The pipeline failed: {error}"
     finally:
@@ -121,7 +114,7 @@ def reset_all():
     """Clear outputs. The pipeline re-reads the CSVs on every run, so rep
     capacities always start back at their baseline (0) after a reset."""
     for key in list(st.session_state.keys()):
-        if key not in SETTINGS_DEFAULTS and not key.startswith(("def", "live_")):  # keep settings, manager defaults and links
+        if key not in SETTINGS_DEFAULTS and not key.startswith("def"):  # keep settings and manager defaults
             del st.session_state[key]
 
 
@@ -310,23 +303,17 @@ def lead_panel(rows, key, actions):
 
 @st.fragment(run_every=30)
 def live_watch():
-    """Every 30 seconds: if the CSV files (or the live link's sheets) changed, re-run so the dashboard matches them.
-    Manager work (assigned / handled / fixed values) is kept. Nothing is ever written back to the file or sheet."""
+    """Every 30 seconds: if the CSV files changed, re-run so the dashboard matches them.
+    Manager work (assigned / handled / fixed values) is kept. Nothing is ever written back to the files."""
     label = st.session_state.get("dataset")
     if not label:
         return
-    try:
-        now = source_paths(label)[2]
-        problem = ""
-    except ValueError as error:
-        now, problem = None, str(error)
-    if now is not None and st.session_state.get("file_sig") not in (None, now):
+    now = source_paths(label)[2]
+    if st.session_state.get("file_sig") not in (None, now):
         st.session_state.refresh_dataset = label
         st.rerun()
-    note = (f'<b style="color:var(--pink)">●</b> Can\'t reach the link right now, still showing the last data loaded at '
-            f'{st.session_state.get("refreshed_at", "-")}.' if problem else
-            f'<b>●</b> Live · checked {datetime.now().strftime("%H:%M:%S")} · last loaded {st.session_state.get("refreshed_at", "-")}')
-    st.markdown(f'<div class="live">{note}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="live"><b>●</b> Reading the team CSV files · checked {datetime.now().strftime("%H:%M:%S")} · '
+                f'last loaded {st.session_state.get("refreshed_at", "-")}</div>', unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------- header ----
@@ -344,22 +331,16 @@ results = st.session_state.get("results")
 
 st.markdown(H.hero_html(st.session_state.get("dataset"), PIPELINE_NAME), unsafe_allow_html=True)
 
-c_scale, c_reset, c_live, c_edit, c_edits, c_settings = st.columns([1.5, .9, 1.4, 1.4, 1.6, .6])
-if c_scale.button("▶ Run Pipeline", type="primary", use_container_width=True, help=H.help_text("Run Pipeline")):
+c_sample, c_scale, c_reset, c_edit, c_edits, c_settings = st.columns([1.2, 1.2, 1, 1.4, 1.6, .6])
+if c_sample.button("▶ Run Sample", type="primary", use_container_width=True, help=H.help_text("Run Sample")):
+    run_dataset("Sample (100 leads)")
+    st.rerun()
+if c_scale.button("▶ Run Scale", type="primary", use_container_width=True, help=H.help_text("Run Scale")):
     run_dataset("Scale (50,000 leads)")
     st.rerun()
 if c_reset.button("↺ Reset", use_container_width=True, help=H.help_text("Reset")):
     reset_all()
     st.rerun()
-with c_live.popover("🔗 Live link", use_container_width=True):
-    st.markdown("**Live link**")
-    st.caption("Paste a Google Sheet (set to 'Anyone with the link can view') or any CSV link. The dashboard checks it every "
-               "30 seconds and updates when anyone edits it. It only reads the sheet; nothing is written back.")
-    st.text_input("Leads link", key="live_leads_url", placeholder="https://docs.google.com/spreadsheets/d/...")
-    st.text_input("Reps link", key="live_reps_url", placeholder="https://docs.google.com/spreadsheets/d/...")
-    if st.button("▶ Run from link", type="primary", key="live_run", use_container_width=True):
-        run_dataset(LIVE_LABEL)
-        st.rerun()
 _editing = bool(st.session_state.get("edit_mode"))
 c_edit.button("✎ Edit mode: ON" if _editing else "✎ Edit mode", key="edit_on" if _editing else "edit_off",
               on_click=toggle_edit_mode, use_container_width=True,

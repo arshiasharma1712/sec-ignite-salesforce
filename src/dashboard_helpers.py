@@ -154,7 +154,8 @@ _BASE_CSS = """
 html, body{background:var(--bg) !important;color:var(--page-text);font-family:var(--font);}
 .stApp{background:var(--page-bg) !important;color:var(--page-text);font-family:var(--font);}
 [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stMain"]{background:transparent !important;}
-.stApp *{font-family:var(--font);}
+.stApp *:not([data-testid="stIconMaterial"]):not([class*="material"]):not(.material-icons){font-family:var(--font);}
+.stApp [data-testid="stIconMaterial"],.stApp [class*="material-symbols"]{font-family:"Material Symbols Rounded","Material Symbols Outlined" !important;}
 .block-container{padding-top:1.2rem; max-width:1500px;}
 [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"] p, label, label p, label span{color:var(--page-text);}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{color:var(--page-muted) !important;}
@@ -181,14 +182,16 @@ footer{visibility:hidden;}
 .listhead span{font-size:.84rem;color:var(--muted);}
 
 /* native widgets */
-.stButton button, .stDownloadButton button, [data-testid="stPopover"] > button{border-radius:6px;font-weight:700;
+.stButton button, .stDownloadButton button, [data-testid="stPopover"] button, [data-testid="stPopoverButton"]{border-radius:6px;font-weight:700;
   min-height:40px;padding:.4rem 1rem;background:var(--btn-bg);border:1px solid var(--btn-border);box-shadow:none;}
-.stButton button p, .stDownloadButton button p, [data-testid="stPopover"] > button p,
-[data-testid="stPopover"] > button span{color:var(--btn-text) !important;font-weight:700;}
+.stButton button p, .stDownloadButton button p, [data-testid="stPopover"] button p,
+[data-testid="stPopover"] button span, [data-testid="stPopover"] button svg{color:var(--btn-text) !important;font-weight:700;}
+[data-testid="stPopover"] button, [data-testid="stPopoverButton"]{background:var(--btn-bg) !important;
+  border:1px solid var(--btn-border) !important;color:var(--btn-text) !important;}
 .stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"]{
   background:var(--primary-bg);border-color:var(--primary-bg);}
 .stButton button[kind="primary"] p, .stButton button[data-testid="stBaseButton-primary"] p{color:var(--primary-text) !important;}
-.stButton button:hover, .stDownloadButton button:hover, [data-testid="stPopover"] > button:hover{
+.stButton button:hover, .stDownloadButton button:hover, [data-testid="stPopover"] button:hover{
   border-color:var(--accent);box-shadow:0 1px 4px rgba(3,45,96,.18);}
 .stButton button[kind="primary"]:hover{background:var(--accent2);border-color:var(--accent2);}
 .stButton button:disabled{opacity:.5;box-shadow:none;}
@@ -218,7 +221,9 @@ button[data-baseweb="tab"]:hover{background:var(--hover);}
 div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
 [data-testid="stExpander"]{background:var(--card);border:1px solid var(--border);border-radius:8px;}
 [data-testid="stExpander"] *{color:var(--text);}
-.stAlert{border-radius:8px;}
+.stAlert, [data-testid="stAlert"], [data-testid="stNotification"]{border-radius:8px;background:var(--card) !important;
+  border:1px solid var(--border-strong);border-left:4px solid var(--pink);}
+.stAlert *, [data-testid="stAlert"] *, [data-testid="stNotification"] *{color:var(--text) !important;}
 
 /* KPI cards: flat, with a colored left edge and one soft circle for personality */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin:8px 0 18px;}
@@ -461,7 +466,8 @@ TIPS = {
     "help:reason": "Show only leads sent to review for the reasons you pick.",
     "help:level": "Show only reps of the levels you pick.",
     "help:slider": "Hides reps who are less full than this percentage.",
-    "help:Run Pipeline": "Clean, score and route the full 50,000-lead file to test speed and capacity limits.",
+    "help:Run Sample": "Clean, score and route the 100-lead sample file.",
+    "help:Run Scale": "Clean, score and route the full 50,000-lead file to test speed and capacity limits.",
     "help:Reset": "Clear the results and put every rep back at zero leads. Your manager defaults stay.",
     "help:Dark": "Switch between light and dark mode.",
     "help:lead": "Pick a lead from the rows on this page to see how it was routed.",
@@ -805,7 +811,7 @@ def hero_html(dataset_label=None, pipeline_name=""):
     pill = (f'<span class="pill">{esc(dataset_label)} · {esc(pipeline_name)}</span>'
             if dataset_label else '<span class="pill">Run a dataset</span>')
     return ('<div class="gbar">Lead Operations<span class="sep">|</span><span class="sub">Sales workspace</span></div>'
-            f'<div class="hero"><span class="tile">{_FUNNEL_SVG}</span><div>'
+            f'<div class="hero"><div>'
             '<div class="eyebrow">Sales operations / Lead management</div>'
             '<h1>Lead Prioritization Dashboard</h1>'
             f'<p>The right lead, to the right rep, at the right time.</p></div>{pill}</div>')
@@ -819,7 +825,7 @@ def list_header_html(title, shown, total, sort_label):
 
 def empty_html():
     return (f'<div class="empty">{_EMPTY_SVG}<h2>No results yet</h2>'
-            '<div>Press <b>Run Pipeline</b> to see the prioritized queue.</div></div>')
+            '<div>Press <b>Run Sample</b> or <b>Run Scale</b> to see the prioritized queue.</div></div>')
 
 
 def kpi_card(label, value, sub="", tone="", tip_key=None):
@@ -1304,15 +1310,42 @@ def reapply_manager_work(results, saved):
     return kept
 
 
-def find_data_dir(here):
-    """Where the real CSVs live: $LEAD_DATA_DIR, then <dashboard>/data, then <repo root>/data."""
+def _csv_roots(here):
     import os
     from pathlib import Path
-    options = [os.environ.get("LEAD_DATA_DIR"), Path(here) / "data", Path(here).parent / "data"]
-    for option in options:
-        if option and (Path(option) / "leads_scale.csv").exists():
-            return Path(option)
-    return Path(here) / "data"  # nothing found: the app shows a plain "file not found" message
+    here = Path(here)
+    roots = [os.environ.get("LEAD_DATA_DIR"), here / "data", here.parent / "data", here, here.parent, here / "tests" / "fixtures"]
+    return [Path(r) for r in roots if r and Path(r).is_dir()]
+
+
+def find_datasets(here):
+    """Find the sample and scale CSV pairs wherever the team put them.
+
+    A leads file has "lead" in its name, a reps file has "rep" but not "lead";
+    "sample" or "scale" in the name says which dataset it belongs to.
+    Returns {"Sample (100 leads)": (leads_path, reps_path), "Scale (50,000 leads)": (...)}
+    containing only the pairs that were found.
+    """
+    labels = {"sample": "Sample (100 leads)", "scale": "Scale (50,000 leads)"}
+    found = {}
+    for root in _csv_roots(here):
+        for kind, label in labels.items():
+            if label in found:
+                continue
+            files = sorted(root.glob("*.csv"))
+            leads = [f for f in files if "lead" in f.name.lower() and kind in f.name.lower()]
+            reps = [f for f in files if "rep" in f.name.lower() and "lead" not in f.name.lower()
+                    and kind in f.name.lower()]
+            if leads and reps:
+                found[label] = (str(leads[0]), str(reps[0]))
+    return found
+
+
+def find_data_dir(here):
+    """Kept for the preview builder: the folder holding the scale files."""
+    from pathlib import Path
+    pair = find_datasets(here).get("Scale (50,000 leads)")
+    return Path(pair[0]).parent if pair else Path(here) / "data"
 
 
 def file_signature(paths):
