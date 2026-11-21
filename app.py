@@ -16,20 +16,14 @@ import pandas as pd
 import streamlit as st
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # repo root, so the team's src/pipeline.py can be found
+sys.path.insert(0, str(HERE))  # repo root, so the team's src/ package can be found
 
-import dashboard_helpers as H
+from src import dashboard_helpers as H
 
-# Use the team's real pipeline (src/pipeline.py at the repo root) when it exists,
-# otherwise the demo one in dev_only/ so the dashboard still runs on its own.
-try:
-    from src.pipeline import run_pipeline
-    PIPELINE_NAME = "team pipeline"
-except ModuleNotFoundError as error:
-    if error.name not in ("src.pipeline", "src"):
-        raise  # a real import problem inside pipeline.py - do not hide it
-    from dev_only.pipeline_stub import run_pipeline
-    PIPELINE_NAME = "demo pipeline"
+# The dashboard runs the team's verified pipeline (load, clean, score, route) through a small adapter
+# that renames fields for the screens. No scoring or routing happens in this file.
+from src.dashboard_adapter import run_pipeline
+PIPELINE_NAME = "team pipeline"
 
 DATA_DIR = H.find_data_dir(HERE)  # the team's CSVs (see README: where the data goes)
 DATASETS = {
@@ -344,8 +338,11 @@ results = st.session_state.get("results")
 
 st.markdown(H.hero_html(st.session_state.get("dataset"), PIPELINE_NAME), unsafe_allow_html=True)
 
-c_scale, c_reset, c_live, c_edit, c_edits, c_settings = st.columns([1.5, .9, 1.4, 1.4, 1.6, .6])
-if c_scale.button("▶ Run Pipeline", type="primary", use_container_width=True, help=H.help_text("Run Pipeline")):
+c_sample, c_scale, c_reset, c_live, c_edit, c_edits, c_settings = st.columns([1.3, 1.5, .9, 1.4, 1.4, 1.6, .6])
+if c_sample.button("▶ Run Sample", use_container_width=True, help="Run the pipeline on the 100-lead sample dataset."):
+    run_dataset("Sample (100 leads)")
+    st.rerun()
+if c_scale.button("▶ Run Scale", type="primary", use_container_width=True, help=H.help_text("Run Pipeline")):
     run_dataset("Scale (50,000 leads)")
     st.rerun()
 if c_reset.button("↺ Reset", use_container_width=True, help=H.help_text("Reset")):
