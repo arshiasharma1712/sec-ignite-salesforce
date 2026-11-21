@@ -112,6 +112,8 @@ def run_dataset(label, keep_view=False):
         results["defaults_used"], results["defaults_filled"] = dict(defaults), counts
         for position, lead in enumerate(results.get("leads", [])):
             lead["_i"] = position  # lets a manager action find its lead again
+        for position, rep in enumerate(results.get("reps", [])):
+            rep["_i"] = position  # Rep_ID may be missing or duplicated; identify the row instead
         if keep_view:  # live refresh: keep the manager's work and the screen as it was
             st.session_state.kept_edits = H.reapply_manager_work(results, saved)
         else:
@@ -198,7 +200,8 @@ def do_assign(lead_index, rep_id):
     _poke()
     data = st.session_state.get("results") or {}
     lead = data["leads"][lead_index]
-    rep = next((r for r in data["reps"] if r.get("rep_id") == rep_id), None)
+    matches = [r for r in data["reps"] if rep_id and r.get("rep_id") == rep_id]
+    rep = matches[0] if len(matches) == 1 else None
     if rep and H.assign_manually(lead, rep):
         st.toast(f'{lead["lead_id"]} assigned to {rep["rep_id"]} · {rep.get("name")}')
     else:
@@ -223,7 +226,8 @@ def do_override(lead_index, field, widget_key):
 
 def do_clear_override(lead_index):
     _poke()
-    H.clear_overrides(st.session_state["results"]["leads"][lead_index])
+    data = st.session_state["results"]
+    H.clear_overrides(data["reps"], data["leads"][lead_index])
     st.toast("Fallback removed from this lead")
 
 
@@ -375,7 +379,7 @@ def lead_edit_box(lead, key):
             st.toast(f'{lead["lead_id"]}: {len(changes)} value(s) changed')
             st.rerun()
     if lead.get("overrides") and right.button("↩ Remove my changes", key=f"{key}_ed_undo_{chosen}", use_container_width=True):
-        H.clear_overrides(lead)
+        H.clear_overrides(reps_now, lead)
         st.toast("Changes removed from this lead")
         st.rerun()
 
@@ -392,13 +396,18 @@ if _dialog is not None:
         lead_body(lead, key, actions)
 
     @_dialog("Rep details", width="large")
-    def rep_dialog(rep_id):
+    def rep_dialog(rep_index):
         data = st.session_state["results"]
-        rep = next((r for r in data["reps"] if r.get("rep_id") == rep_id), None)
-        if rep is None:
+        if not 0 <= rep_index < len(data["reps"]):
             st.caption("That rep is not in the current results.")
             return
-        st.markdown(H.rep_detail_html(rep, [l for l in data["leads"] if l.get("rep_id") == rep_id]), unsafe_allow_html=True)
+        rep = data["reps"][rep_index]
+        rep_id = rep.get("rep_id")
+        unique_id = rep_id and sum(r.get("rep_id") == rep_id for r in data["reps"]) == 1
+        assigned = [lead for lead in data["leads"]
+                    if unique_id and lead.get("assignment_status") == H.STATUS_ASSIGNED
+                    and lead.get("rep_id") == rep_id]
+        st.markdown(H.rep_detail_html(rep, assigned), unsafe_allow_html=True)
 
 
 def lead_frame(rows, show_status=True, show_reason=True):
@@ -464,7 +473,7 @@ def row_openers(rows, prefix, kind, actions=False):
     """Makes the original colored table rows clickable: a click on a row presses that row's hidden button."""
     components.html(ROW_CLICK_JS, height=0)
     for row in rows:
-        ident = row["_i"] if kind == "lead" else row["rep_id"]
+        ident = row["_i"]
         if st.button("open", key=f"rowopen_{prefix}_{ident}"):
             st.session_state.pop("_refresh", None)
             if kind == "lead":
@@ -499,7 +508,7 @@ def show_reps(rows):
     if HAS_ROW_CLICK and rows:
         st.caption("👆 Click any row to see that rep's leads and capacity.")
         if st.session_state.get("grid_tables"):
-            clickable_table(rep_frame(rows), rows, "p", lambda rep: rep_dialog(rep["rep_id"]))
+            clickable_table(rep_frame(rows), rows, "p", lambda rep: rep_dialog(rep["_i"]))
             return
         st.markdown(H.reps_table_html(rows, open_prefix="p"), unsafe_allow_html=True)
         row_openers(rows, "p", "rep")
