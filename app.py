@@ -1,4 +1,4 @@
-"""Lead Prioritization Dashboard - Streamlit dashboard.
+﻿"""Lead Prioritization Dashboard - Streamlit dashboard.
 
 Run with:  streamlit run app.py
 
@@ -15,21 +15,15 @@ import pandas as pd
 import streamlit as st
 
 HERE = Path(__file__).resolve().parent
-for _p in (HERE, HERE.parent):  # the repo root, wherever this file sits, so src/pipeline.py can be found
-    sys.path.insert(0, str(_p))
+for p in (HERE, HERE.parent):
+    sys.path.insert(0, str(p))
 
-import dashboard_helpers as H
+from src import dashboard_helpers as H
 
-# Use the team's real pipeline (src/pipeline.py at the repo root) when it exists,
-# otherwise the demo one in dev_only/ so the dashboard still runs on its own.
-try:
-    from src.pipeline import run_pipeline
-    PIPELINE_NAME = "team pipeline"
-except ModuleNotFoundError as error:
-    if error.name not in ("src.pipeline", "src"):
-        raise  # a real import problem inside pipeline.py - do not hide it
-    from dev_only.pipeline_stub import run_pipeline
-    PIPELINE_NAME = "demo pipeline"
+# The dashboard runs the team's verified pipeline (load, clean, score, route) through a small adapter
+# that renames fields for the screens. No scoring or routing happens in this file.
+from src.dashboard_adapter import run_pipeline
+PIPELINE_NAME = "team pipeline"
 
 DATA_DIR = HERE / "data"
 # the team's CSVs, found by name (leads/reps + sample/scale); missing pairs give a plain "file not found" message
@@ -41,14 +35,14 @@ DATASETS.setdefault("Sample (100 leads)", ("leads_sample.csv", "reps_sample.csv"
 DATASETS.setdefault("Scale (50,000 leads)", ("leads_scale.csv", "reps_scale.csv"))
 PAGE_SIZES = [25, 50, 100]
 CAND_PAGE = 10  # reps shown per page in the manager-action list
-# the ☰ Settings menu: key -> starting value
+# the â˜° Settings menu: key -> starting value
 SETTINGS_DEFAULTS = {"theme": "Light", "text_size": "Normal", "density": "Comfortable",
                      "hc": False, "motion": False}
 LEAD_EXPORT_FIELDS = ["lead_id", "company", "region", "language", "industry", "company_size",
                       "activity", "vip", "score", "priority", "assignment_status",
                       "rep_id", "rep_name", "reason"]
 
-st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="â˜ï¸", layout="wide")
 
 
 # ---------------------------------------------------------------- state ----
@@ -131,9 +125,9 @@ def pager(key, total_pages, page_size=None):
         st.session_state[key] = min(max(st.session_state[key] + step, 1), total_pages)
 
     left, middle, right, _ = st.columns([1, 2.6, 1, 5])
-    left.button("◀ Prev", key=f"{key}_prev", on_click=move, args=(-1,), disabled=page <= 1)
-    middle.markdown(f'<div class="pager">Page {page} of {total_pages}' + (f' · {page_size} rows per page' if page_size else '') + '</div>', unsafe_allow_html=True)
-    right.button("Next ▶", key=f"{key}_next", on_click=move, args=(1,), disabled=page >= total_pages)
+    left.button("â—€ Prev", key=f"{key}_prev", on_click=move, args=(-1,), disabled=page <= 1)
+    middle.markdown(f'<div class="pager">Page {page} of {total_pages}' + (f' Â· {page_size} rows per page' if page_size else '') + '</div>', unsafe_allow_html=True)
+    right.button("Next â–¶", key=f"{key}_next", on_click=move, args=(1,), disabled=page >= total_pages)
     return page
 
 
@@ -172,7 +166,7 @@ def do_assign(lead_index, rep_id):
     lead = data["leads"][lead_index]
     rep = next((r for r in data["reps"] if r.get("rep_id") == rep_id), None)
     if rep and H.assign_manually(lead, rep):
-        st.toast(f'{lead["lead_id"]} assigned to {rep["rep_id"]} · {rep.get("name")}')
+        st.toast(f'{lead["lead_id"]} assigned to {rep["rep_id"]} Â· {rep.get("name")}')
     else:
         st.toast("That rep is full now. Pick another one.")
 
@@ -247,20 +241,20 @@ def lead_panel(rows, key, actions):
     by_index = {lead["_i"]: lead for lead in rows}
     chosen = st.selectbox(
         "Open a lead", options, key=pick_key, help=H.help_text("lead"),
-        format_func=lambda i: f'{by_index[i]["lead_id"]} · {by_index[i]["company"]} · '
-                              f'{by_index[i]["priority"]} · score {by_index[i]["score"]} · {by_index[i]["assignment_status"]}')
+        format_func=lambda i: f'{by_index[i]["lead_id"]} Â· {by_index[i]["company"]} Â· '
+                              f'{by_index[i]["priority"]} Â· score {by_index[i]["score"]} Â· {by_index[i]["assignment_status"]}')
     lead = by_index[chosen]
     all_reps = st.session_state["results"]["reps"]
     st.markdown(f'<div class="sub">{H.priority_badge(lead["priority"])} {H.status_badge(lead["assignment_status"])}'
                 + (f' <span class="vip"{H.tip("VIP")}>VIP</span>' if lead.get("vip") else "")
-                + f' &nbsp; <b>{H.esc(lead["lead_id"])}</b> · {H.esc(lead["company"])} · {H.esc(lead["region"])} / '
+                + f' &nbsp; <b>{H.esc(lead["lead_id"])}</b> Â· {H.esc(lead["company"])} Â· {H.esc(lead["region"])} / '
                   f'{H.esc(lead["language"])} / {H.esc(lead["industry"])}</div>', unsafe_allow_html=True)
     if actions:
         if lead.get("manual"):
-            what = (f'Assigned by hand to <b>{H.esc(lead["rep_id"])} · {H.esc(lead["rep_name"])}</b>. This overrides the automatic routing.'
+            what = (f'Assigned by hand to <b>{H.esc(lead["rep_id"])} Â· {H.esc(lead["rep_name"])}</b>. This overrides the automatic routing.'
                     if lead["manual"] == "assigned" else "Marked as handled by a manager.")
             st.markdown(f'<div class="why-box"><h4>Manager action</h4>{what}</div>', unsafe_allow_html=True)
-            st.button("↩ Undo, send back to review", key=f"{key}_undo_{chosen}", on_click=do_undo, args=(chosen,))
+            st.button("â†© Undo, send back to review", key=f"{key}_undo_{chosen}", on_click=do_undo, args=(chosen,))
         elif H.is_waiting(lead):
             missing = H.unreadable_fields(lead)
             if missing or lead.get("overrides"):
@@ -275,16 +269,16 @@ def lead_panel(rows, key, actions):
                     right.button("Apply", key=f"{wkey}_go", on_click=do_override, args=(chosen, field, wkey),
                                  use_container_width=True)
                 if lead.get("overrides"):
-                    st.button("✕ Remove my fixes from this lead", key=f"{key}_unfix_{chosen}", on_click=do_clear_override, args=(chosen,))
+                    st.button("âœ• Remove my fixes from this lead", key=f"{key}_unfix_{chosen}", on_click=do_clear_override, args=(chosen,))
             everyone = H.candidate_reps(all_reps, lead)
             st.markdown('<div class="why-box"><h4>Manager action</h4>Every rep with room is listed, best match first. '
                         'Search by rep ID or name, or mark the lead as handled if you will deal with it outside the '
                         'system.</div>', unsafe_allow_html=True)
             query = st.text_input("Find a rep", placeholder="Type a rep ID or name, like R-499", key=f"{key}_repq_{chosen}")
             found = H.search_candidates(everyone, query)
-            st.caption(f"{H.fmt_int(len(found))} of {H.fmt_int(len(everyone))} reps with room · most to least qualified "
+            st.caption(f"{H.fmt_int(len(found))} of {H.fmt_int(len(everyone))} reps with room Â· most to least qualified "
                        "(skills match first, then the preferred level and the least busy rep)"
-                       + (" · Critical leads can't go to Juniors" if lead["priority"] == "Critical" else ""))
+                       + (" Â· Critical leads can't go to Juniors" if lead["priority"] == "Critical" else ""))
             reset_page_when_filters_change(f"{key}_cand_page", (chosen, query))
             if not found:
                 st.caption("No rep with room matches that search." if query else "No rep with free capacity is available for this lead.")
@@ -296,7 +290,7 @@ def lead_panel(rows, key, actions):
                     left.markdown(H.candidate_html(rep, marks, offset), unsafe_allow_html=True)
                     right.button("Assign", key=f"{key}_assign_{chosen}_{rep['rep_id']}", type="primary",
                                  on_click=do_assign, args=(chosen, rep["rep_id"]), use_container_width=True)
-            st.button("✓ Mark as handled", key=f"{key}_handle_{chosen}", on_click=do_handle, args=(chosen,))
+            st.button("âœ“ Mark as handled", key=f"{key}_handle_{chosen}", on_click=do_handle, args=(chosen,))
     st.markdown(H.score_html(lead) + H.why_html(lead), unsafe_allow_html=True)
 
 
@@ -312,7 +306,7 @@ def live_watch():
     if st.session_state.get("file_sig") not in (None, now):
         st.session_state.refresh_dataset = label
         st.rerun()
-    st.markdown(f'<div class="live"><b>●</b> Reading the team CSV files · checked {datetime.now().strftime("%H:%M:%S")} · '
+    st.markdown(f'<div class="live"><b>â—</b> Reading the team CSV files Â· checked {datetime.now().strftime("%H:%M:%S")} Â· '
                 f'last loaded {st.session_state.get("refreshed_at", "-")}</div>', unsafe_allow_html=True)
 
 
@@ -331,21 +325,18 @@ results = st.session_state.get("results")
 
 st.markdown(H.hero_html(st.session_state.get("dataset"), PIPELINE_NAME), unsafe_allow_html=True)
 
-c_sample, c_scale, c_reset, c_edit, c_edits, c_settings = st.columns([1.2, 1.2, 1, 1.4, 1.6, .6])
-if c_sample.button("▶ Run Sample", type="primary", use_container_width=True, help=H.help_text("Run Sample")):
-    run_dataset("Sample (100 leads)")
-    st.rerun()
-if c_scale.button("▶ Run Scale", type="primary", use_container_width=True, help=H.help_text("Run Scale")):
+c_scale, c_reset, c_live, c_edit, c_edits, c_settings = st.columns([1.5, .9, 1.4, 1.4, 1.6, .6])
+if c_scale.button("â–¶ Run Pipeline", type="primary", use_container_width=True, help=H.help_text("Run Pipeline")):
     run_dataset("Scale (50,000 leads)")
     st.rerun()
-if c_reset.button("↺ Reset", use_container_width=True, help=H.help_text("Reset")):
+if c_reset.button("â†º Reset", use_container_width=True, help=H.help_text("Reset")):
     reset_all()
     st.rerun()
 _editing = bool(st.session_state.get("edit_mode"))
-c_edit.button("✎ Edit mode: ON" if _editing else "✎ Edit mode", key="edit_on" if _editing else "edit_off",
+c_edit.button("âœŽ Edit mode: ON" if _editing else "âœŽ Edit mode", key="edit_on" if _editing else "edit_off",
               on_click=toggle_edit_mode, use_container_width=True,
               help="Turn edit mode on or off. In edit mode you can type new values into missing or defaulted cells.")
-with c_edits.popover("✎ Manager edits", use_container_width=True):
+with c_edits.popover("âœŽ Manager edits", use_container_width=True):
     st.markdown("**Manager edits**")
     edit = st.radio("What would you like to do?", ["Enter default values", "Clear all defaults"],
                     index=None, key="def_choice")
@@ -371,7 +362,7 @@ with c_edits.popover("✎ Manager edits", use_container_width=True):
         if st.button("Clear defaults", key="def_clear", use_container_width=True):
             st.session_state.clear_defaults = True
             st.rerun()
-with c_settings.popover("☰", use_container_width=True):
+with c_settings.popover("â˜°", use_container_width=True):
     st.markdown("**Settings**")
     st.caption("Appearance")
     st.radio("Theme", ["Light", "Dark"], key="theme", horizontal=True)
@@ -423,7 +414,7 @@ if tab == "Overview":
             label, value, sub, tone, tip_key, action = spec
             column.markdown(H.kpi_card(label, value, sub, tone, tip_key), unsafe_allow_html=True)
             if action:
-                column.button("View ›", key=f"kpi_{index}", on_click=jump, args=action, use_container_width=True)
+                column.button("View â€º", key=f"kpi_{index}", on_click=jump, args=action, use_container_width=True)
     st.markdown(H.low_banner_html(reps), unsafe_allow_html=True)
     left, right = st.columns(2)
     left.markdown(H.priority_mix_html(leads), unsafe_allow_html=True)
@@ -455,7 +446,7 @@ elif tab == "Lead Queue":
                                               tuple(sorted(cols.items())), order, size))
     info, download = st.columns([5, 1.4])
     info.markdown(H.list_header_html("Lead Queue", len(shown), len(leads), order), unsafe_allow_html=True)
-    download.download_button("⬇ Download CSV", H.to_csv_bytes(shown, LEAD_EXPORT_FIELDS),
+    download.download_button("â¬‡ Download CSV", H.to_csv_bytes(shown, LEAD_EXPORT_FIELDS),
                             file_name="lead_queue.csv", mime="text/csv", use_container_width=True)
     page = pager("q_page", H.paginate(shown, 1, size)[2], size)
     page_rows, _, _ = H.paginate(shown, page, size)
