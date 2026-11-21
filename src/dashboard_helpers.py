@@ -6,6 +6,7 @@ calls these functions and displays what they return.
 Input is the pipeline result dict (see dev_only/pipeline_stub.py for the contract).
 """
 
+from collections import Counter
 import csv
 import html
 import io
@@ -1009,7 +1010,7 @@ def reps_table_html(reps, open_prefix=None):
         cap, used = rep.get("max_capacity", 0), rep.get("current_capacity", 0)
         frac = rep_utilization(rep)
         pct = min(frac, 1) * 100
-        hook = f' data-open="rowopen_{open_prefix}_{rep.get("rep_id")}" title="Click to open this rep"' if open_prefix else ""
+        hook = f' data-open="rowopen_{open_prefix}_{rep["_i"]}" title="Click to open this rep"' if open_prefix else ""
         load = (f'<div class="load"><div class="top"><span><b>{used}</b> / {cap}</span>'
                 f'<span>{frac * 100:.0f}%</span></div><div class="track">'
                 f'<div class="fill {_load_tone(frac)}" style="width:{pct:.1f}%"></div></div></div>')
@@ -1239,8 +1240,11 @@ def candidate_reps(reps, lead, loose=True):
     but Senior before Manager for Critical leads), then the least busy rep. loose=False keeps only perfect matches.
     """
     order = ["Senior", "Manager"] if lead.get("priority") == "Critical" else ["Junior", "Senior", "Manager"]
+    id_counts = Counter(rep.get("rep_id") for rep in reps)
     out = []
     for rep in reps:
+        if not rep.get("rep_id") or id_counts[rep["rep_id"]] != 1:
+            continue  # these rows cannot identify an assignment, just as in the router
         if rep.get("current_capacity", 0) >= rep.get("max_capacity", 0) or rep.get("seniority") not in order:
             continue
         marks = []
@@ -1319,8 +1323,29 @@ def set_override(lead, field, value):
     lead[field] = value
 
 
-def clear_overrides(lead):
-    for field, old in (lead.get("original_values") or {}).items():
+def _review_after_edit(reps, lead, reason):
+    """Release the current assignment and make review the new manual-undo target."""
+    rep_id = lead.get("rep_id")
+    if rep_id:
+        for rep in reps:
+            if rep.get("rep_id") == rep_id:
+                if rep.get("current_capacity", 0) > 0:
+                    rep["current_capacity"] -= 1
+                break
+    lead.update(rep_id="", rep_name="", rep_seniority="",
+                assignment_status=STATUS_REVIEW, reason=reason)
+    lead.pop("manual", None)
+    # An old automatic assignment is no longer valid after its matching fields change.
+    lead["auto"] = {"status": STATUS_REVIEW, "reason": reason}
+
+
+def clear_overrides(reps, lead):
+    """Restore routing fields, release any assignment, and require a fresh review."""
+    originals = lead.get("original_values") or {}
+    if not originals:
+        return
+    _review_after_edit(reps, lead, "Manager changes removed, needs review")
+    for field, old in originals.items():
         lead[field] = old
     lead.pop("overrides", None)
     lead.pop("original_values", None)
@@ -1473,15 +1498,7 @@ def changed_cells(leads, records):
 def edit_value(reps, lead, field, value):
     """Manager types a new value. If the lead already had a rep, that rep is freed and the lead goes back to
     Manager Review, because the old match was based on the old value."""
-    if lead.get("manual"):
-        undo_manual(reps, lead)
-    if lead.get("rep_id"):
-        for rep in reps:
-            if rep.get("rep_id") == lead["rep_id"] and rep.get("current_capacity", 0) > 0:
-                rep["current_capacity"] -= 1
-                break
-        if "auto" not in lead:
-            lead["auto"] = {"status": lead.get("assignment_status"), "reason": lead.get("reason")}
-        lead.update(rep_id="", rep_name="", rep_seniority="", assignment_status=STATUS_REVIEW,
-                    reason="Value changed by a manager, needs a rep")
+    if lead.get(field) == value:
+        return
+    _review_after_edit(reps, lead, "Value changed by a manager, needs a rep")
     set_override(lead, field, value)
