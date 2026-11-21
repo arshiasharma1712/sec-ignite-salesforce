@@ -1,0 +1,16 @@
+# Python cache and test artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments and editor files
+.venv/
+venv/
+.vscode/
+.idea/
+
+# Local environment and secrets
+.env
+
+# Generated output from scripts/export_cleaned.py
+cleaned/

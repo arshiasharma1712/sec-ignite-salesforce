@@ -20,6 +20,50 @@ git switch -c feature/your-task
 
 Coordination scaffold. Application implementation and dependency selection are pending. Setup, run, and test commands will be added by the integration owner after the stack is chosen.
 
+## Lead Scoring
+
+The scoring module (`src/scoring.py`) calculates lead scores based
+on company size, recent activity, and industry.
+
+VIP referrals automatically receive 100 points and CRITICAL priority.
+
+### Scoring Rules
+
+| Category | Condition | Points |
+|---|---|---|
+| Company Size | 1,000+ employees | 50 |
+| Company Size | 100–999 employees | 30 |
+| Company Size | 1–99 employees | 0 |
+| Company Size | Missing or invalid | 20 |
+| Recent Activity | Requested Live Demo / Contact Sales | 35 |
+| Recent Activity | Attended Webinar | 25 |
+| Recent Activity | Downloaded Whitepaper | 15 |
+| Recent Activity | Visited Pricing Page | 5 |
+| Industry | Technology | 15 |
+| Industry | Healthcare / Finance | 10 |
+| Industry | Manufacturing / Retail | 0 |
+
+### Priority Levels
+
+- CRITICAL: 85–100
+- HIGH: 60–84
+- MEDIUM: 40–59
+- LOW: 0–39
+
+### Main Functions
+
+- `score_lead()` - Scores one lead.
+- `score_leads()` - Scores multiple leads and preserves original fields.
+- `sort_for_routing()` - Sorts leads by priority, score, VIP status, and Lead ID.
+
+### Testing
+
+Run:
+
+python -m pytest tests/test_scoring.py -v
+
+Result: 151 tests passed locally.
+
 ## Deliverables
 
 - Working software with local setup instructions.
