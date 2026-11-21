@@ -34,14 +34,12 @@ The cheat sheet says to expect about 10% Critical, 20% High, 40% Medium, 30% Low
 | Capacity | A rep at `Max_Capacity` leaves the queue. A lead with no eligible rep left goes to Manager Review. |
 | Manager Review reasons | `No matching representative`, `No eligible Senior or Manager`, `Eligible representatives at capacity`, `Missing or invalid routing fields`, plus invalid scoring metadata |
 
-### Unknown industry (assumption)
+### Unknown routing fields
 
-A lead with industry `Unknown` matches only reps whose expertise is `Unknown`. The challenge requires strict matching and does not say what to do with Unknown, so this is our documented choice. The alternative is to send every Unknown-industry lead to Manager Review. About 5,259 of 45,924 assignments depend on this choice. It is one line in `src/routing.py` (`_INDUSTRIES`).
+A lead with `Unknown`, missing, or unresolved Region, Language, or Industry Vertical goes to Manager Review with `Missing or invalid routing fields`. This check precedes matching and capacity checks, including for VIP leads. Representatives with unresolved matching fields remain visible but are excluded from assignment with a warning. Two Unknown values do not establish a skill match.
 
-### Unknown region or language
-
-These never match anything. The lead goes to Manager Review.
+This restores the original routing proposal and replaces PR #12's Unknown-industry matching policy. Missing company size, activity, and VIP status retain their scoring fallbacks; those fields alone do not prevent routing. Fused-region normalization retains the suffix policy described above.
 
 ## Why the assignment rate changed during development
 
-Strictly matching only fully readable values gave 35,525 of 50,000 leads assigned (71.0%). Reading fused regions raised that to 40,665. Matching Unknown industry to Unknown expertise raised it to 45,924 (91.85%). Those two policies account for the entire increase. A higher rate comes from looser matching, not from a bug fix.
+Earlier policies produced 35,525 assignments before fused-region resolution, then 40,665 after applying the suffix policy. PR #12 temporarily allowed Unknown industry to match Unknown expertise, increasing assignments to 45,924. Restoring strict industry validation returns the current supplied-scale result to 40,665 assigned (81.33%), with 6,167 leads reviewed for missing/invalid routing fields and 3,168 for exhausted capacity. All 50,000 leads remain traceable; 191 representatives with unresolved skills are retained but excluded. See `docs/routing.md` for measured timings and verification.

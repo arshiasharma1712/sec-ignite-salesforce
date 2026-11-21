@@ -1,6 +1,7 @@
 """Routing rules and normalization/scoring integration, including supplied CSVs."""
 from collections import Counter
 from copy import deepcopy
+import csv
 from itertools import product
 from pathlib import Path
 import platform
@@ -50,6 +51,7 @@ def assert_invariants(result, leads, reps):
         rep = by_id[row["rep_id"]]
         for lead_field, rep_field in [("Region", "Region"), ("Language", "Language"),
                                       ("Industry_Vertical", "Industry_Vertical_Expertise")]:
+            assert row[lead_field].strip().casefold() not in {"", "unknown"}
             assert row[lead_field].strip().casefold() == rep[rep_field].strip().casefold()
         if row["priority"] == "CRITICAL":
             assert rep["Seniority_Level"].strip().casefold() in {"senior", "manager"}
@@ -166,7 +168,7 @@ def test_order_priority_score_vip_lexicographic_id_and_original_position():
 
 
 @pytest.mark.parametrize("field", ["Region", "Language", "Industry_Vertical"])
-@pytest.mark.parametrize("value", [None, "", "n/a", 123, ["Europe"], float("nan")])
+@pytest.mark.parametrize("value", [None, "", "Unknown", " uNkNoWn ", "n/a", 123, ["Europe"], float("nan")])
 def test_unresolved_lead_fields_never_match_even_identical_rep_values(field, value):
     rep_field = "Industry_Vertical_Expertise" if field == "Industry_Vertical" else field
     result = route_leads([make_lead(**{field: value})], [make_rep(**{rep_field: value})])
@@ -426,6 +428,11 @@ def test_supplied_csvs_preserve_capacity_aliases_and_routing_invariants(size, le
     assert_invariants(result, scored, reps)
     assert reps == before_reps
     assert all(row["Current_Capacity"] == row["current_capacity"] for row in result["updated_reps"])
+    by_source = {row["source_index"]: row for row in result["assignments"] + result["overflow"]}
+    for index, lead in enumerate(scored):
+        if any(lead[field] == "Unknown" for field in ("Region", "Language", "Industry_Vertical")):
+            assert by_source[index]["assignment_status"] == "Manager Review"
+            assert by_source[index]["reason"] == "Missing or invalid routing fields"
     assert route_leads(scored, reps) == result
 
 
@@ -465,15 +472,65 @@ def test_scale_50k_leads_1600_reps(capsys):
               f"review={len(result['overflow'])}")
 
 
-def test_unknown_industry_matches_only_unknown_industry():
-    unknown_rep = make_rep(**{"Industry_Vertical_Expertise": "Unknown"})
-    result = route_leads([make_lead(Industry_Vertical="Unknown")], [unknown_rep])
-    assert result["assignments"][0]["rep_id"] == "R-1"
-    result = route_leads([make_lead(Industry_Vertical="Unknown")], [make_rep()])
-    assert result["overflow"][0]["reason"] == "No matching representative"
+@pytest.mark.parametrize("field", ["Region", "Language", "Industry_Vertical"])
+@pytest.mark.parametrize("vip", [False, True])
+def test_unknown_skills_are_reviewed_before_capacity_checks_even_for_vips(field, vip):
+    rep_field = "Industry_Vertical_Expertise" if field == "Industry_Vertical" else field
+    leads = [make_lead("UNKNOWN", 100 if vip else 20, is_vip=vip, **{field: "Unknown"}),
+             make_lead("KNOWN")]
+    reps = [make_rep("UNKNOWN", seniority="Senior", **{rep_field: "Unknown"}),
+            make_rep("FULL", seniority="Senior", capacity=10, current=10)]
+    before = deepcopy((leads, reps))
+    result = route_leads(leads, reps)
+    assert result["assignments"] == []
+    assert {row["Lead_ID"]: row["reason"] for row in result["overflow"]} == {
+        "UNKNOWN": "Missing or invalid routing fields",
+        "KNOWN": "Eligible representatives at capacity",
+    }
+    assert result["rep_warnings"] == [{
+        "source_index": 0, "rep_id": "UNKNOWN", "reason": "Missing or invalid routing fields",
+    }]
+    assert result["updated_reps"] == reps
+    assert (leads, reps) == before
+    assert_invariants(result, leads, reps)
 
 
-@pytest.mark.parametrize("field", ["Region", "Language"])
-def test_unknown_region_or_language_never_matches(field):
-    result = route_leads([make_lead(**{field: "Unknown"})], [make_rep(**{field: "Unknown"})])
-    assert result["overflow"][0]["reason"] == "Missing or invalid routing fields"
+@pytest.mark.parametrize("field", ["Region", "Language", "Industry_Vertical"])
+@pytest.mark.parametrize("raw_value", ["Unknown", " uNkNoWn ", "", "unrecognized value"])
+def test_pipeline_reports_unresolved_skills_separately_from_capacity(tmp_path, field, raw_value):
+    from src.data_loader import LEAD_COLUMNS, REP_COLUMNS
+    from src.dashboard_adapter import to_dashboard_results
+    from src.dashboard_helpers import review_breakdown
+    from src.pipeline import run_pipeline
+
+    rep_field = "Industry_Vertical_Expertise" if field == "Industry_Vertical" else field
+    raw_leads = [
+        make_lead("UNKNOWN", VIP_Referral="True", **{field: raw_value}),
+        make_lead("A", Company_Size="", Recent_Activity="", VIP_Referral="Unknown"),
+        make_lead("B", Company_Size="", Recent_Activity="", VIP_Referral="Unknown"),
+    ]
+    raw_reps = [make_rep("UNKNOWN", "Senior", **{rep_field: raw_value}),
+                make_rep("GOOD", "Senior", capacity=1)]
+    paths = [tmp_path / "leads.csv", tmp_path / "reps.csv"]
+    for path, columns, records in zip(paths, [LEAD_COLUMNS, REP_COLUMNS], [raw_leads, raw_reps]):
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=columns, extrasaction="ignore")
+            writer.writeheader()
+            writer.writerows(records)
+    original_csvs = [path.read_bytes() for path in paths]
+
+    result = run_pipeline(*paths)
+    assert result["metrics"]["review_counts_by_reason"] == {
+        "Missing or invalid routing fields": 1, "Eligible representatives at capacity": 1,
+    }
+    assert result["metrics"]["reps_excluded"] == 1
+    assert [row["Lead_ID"] for row in result["assignments"]] == ["A"]
+    # Scoring-only fallbacks still permit routing when all matching fields are known.
+    assert result["assignments"][0]["score"] == 35
+    assert result["assignments"][0]["vip_unknown"]
+    assert sorted(row["source_index"] for row in result["outcomes"]) == [0, 1, 2]
+    assert [rep["Current_Capacity"] for rep in result["updated_reps"]] == [0, 1]
+    assert review_breakdown(to_dashboard_results(result)["leads"]) == {
+        "Includes missing/unclear data": 1, "At max capacity": 1,
+    }
+    assert [path.read_bytes() for path in paths] == original_csvs

@@ -45,10 +45,9 @@ Clean rep keys
     flags
 
 "Unknown" means a value was supplied as unknown or could not be resolved.
-Unknown region or language goes to Manager Review. Under the team's merged
-industry policy, Unknown industry is a literal category that matches only
-Unknown industry, never a wildcard. Unmapped values keep their quality flags
-and warnings even when the resulting industry category is matchable.
+Unknown region, language, or industry goes to Manager Review during routing.
+Representatives with an Unknown matching field are retained but excluded from
+routing. Unmapped values keep their quality flags and warnings.
 
 Policies (see also the warnings list, which logs every non-trivial fix):
     * Case, surrounding whitespace, repeated spaces and . - _ separators are
