@@ -49,13 +49,17 @@ combined/ambiguous values. Canonical values are:
 
 - Region: `North America`, `Europe`, `Asia-Pacific`.
 - Language: `English`, `German`, `Spanish`.
-- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`, `Unknown`.
+- Industry: `Technology`, `Healthcare`, `Finance`, `Manufacturing`, `Retail`.
 - Seniority: `Junior`, `Senior`, `Manager`.
 
 For example, ` EUROPE ` matches `Europe`; `Europ`, `APAC`, `EN`, `sr`, and `MGR`
-need upstream normalization. Unknown region or language never matches another
-unknown value. The merged [industry policy in PR #12](https://github.com/Apickle47/sec-ignite-salesforce/pull/12)
-allows `Unknown` industry to match only `Unknown` industry; it is not a wildcard.
+need upstream normalization. Unknown region, language, or industry never forms
+a matching group, even when both lead and representative have the same unknown
+value. Leads go to Manager Review with `Missing or invalid routing fields`;
+representatives are retained and excluded with that warning. Validation happens
+before skill matching and capacity checks, including for VIP leads. This restores
+the original strict-routing proposal and supersedes the Unknown-industry matching
+policy introduced in [PR #12](https://github.com/Apickle47/sec-ignite-salesforce/pull/12).
 
 The normalizer's merged [fused-region policy in PR #10](https://github.com/Apickle47/sec-ignite-salesforce/pull/10)
 maps the two recognized combined-region spellings to their trailing region,
@@ -198,7 +202,7 @@ Timing measures only `route_leads`, excluding fixture construction and assertion
 These are **synthetic routing-only measurements**, not a benchmark of the
 supplied CSVs or complete application. No original challenge data has been changed.
 
-### Merged-module regression verification
+### Historical merged-module regression verification
 
 After the capacity alias and representative identity corrections on November 20,
 2026, and integration of the merged policies from PRs #10 and #12, the complete
@@ -229,3 +233,39 @@ preserved and all assignment eligibility,
 seniority, capacity, and repeat-run invariants pass. This is a direct module
 chain, not validation of a dashboard or production pipeline entrypoint; those
 components and their benchmark tooling remain integration/dashboard work.
+
+### Current strict unknown-field verification — November 21, 2026
+
+Unknown industry is now rejected alongside Unknown region and language. Routing
+tests cover case/whitespace variants, blank and unrecognized raw fields, excluded
+representatives, VIPs, and missing-data reasons taking precedence over capacity.
+The CSV-to-pipeline-to-dashboard regression cases verify that scoring-only
+fallbacks still permit assignment and that review categories remain distinct.
+
+- Routing suite: **142 passed in 2.86 s**.
+- Complete repository suite: **421 passed in 14.60 s**, with no skips, including
+  the supplied sample/scale pipeline tests and the dashboard run/reset test.
+- Environment: Python 3.12.14, pytest 9.2.0, Streamlit 1.67.0,
+  macOS 27.2.1 arm64, using an isolated temporary virtual environment.
+
+A separate single-run measurement of the supplied data produced:
+
+| Supplied dataset | Assigned | Manager Review | Pipeline wall time | Routing only |
+| --- | --- | --- | --- | --- |
+| 100 leads / 10 reps | 9 | 91 | 0.004390 s | 0.000509 s |
+| 50,000 leads / 1,600 reps | 40,665 | 9,335 | 1.472399 s | 0.348421 s |
+
+Pipeline wall time covers `src.pipeline.run_dataset`, including CSV loading,
+normalization, scoring, routing, outcome assembly, and metrics. It excludes
+verification assertions and dashboard rendering. Routing-only time comes from
+the pipeline's `routing_only` measurement. These are observations, not limits.
+
+The scale review queue contains **6,167 missing/invalid routing-field leads**
+and **3,168 capacity-exhausted leads**; **191 representatives** are excluded for
+unresolved skills. The sample review queue contains 14 missing/invalid-field
+leads and 77 with no matching representative; three representatives are excluded.
+The dashboard categories agree with these engine reasons. No assigned lead in
+either dataset has Unknown region, language, or industry. Every lead remains
+traceable, capacity accounting and aliases pass, and all four original CSV hashes
+are unchanged. Fused-region normalization and scoring fallbacks retain their
+existing behavior.
