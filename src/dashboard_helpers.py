@@ -6,6 +6,7 @@ calls these functions and displays what they return.
 Input is the pipeline result dict (see dev_only/pipeline_stub.py for the contract).
 """
 
+from collections import Counter
 import csv
 import html
 import io
@@ -118,6 +119,7 @@ _HC_LIGHT = {"text": "#000000", "page_text": "#000000", "strong": "#00137F", "mu
 _HC_DARK = {"text": "#FFFFFF", "page_text": "#FFFFFF", "strong": "#FFFFFF", "muted": "#FFFFFF",
             "page_muted": "#FFFFFF", "border": "rgba(255,255,255,.55)", "border_strong": "#FFFFFF",
             "card": "#000000", "card2": "#000000", "track": "rgba(255,255,255,.22)", "tab_text": "#FFFFFF"}
+_DARK_TABLE_CSS = '[data-testid="stDataFrame"]{filter:invert(.93) hue-rotate(180deg);}'
 _COMPACT_CSS = (".tbl td{padding:5px 12px !important;} .tbl th{padding:8px 12px !important;}"
                 " .panel{padding:12px 18px !important;} .kpi{padding:11px 16px 10px !important;}")
 _NO_MOTION_CSS = "*, *::before, *::after{transition:none !important;animation:none !important;scroll-behavior:auto !important;}"
@@ -131,6 +133,8 @@ def build_css(mode="light", text_size="Normal", high_contrast=False, reduce_moti
         css += f":root{{{_vars(_HC_DARK if mode == 'dark' else _HC_LIGHT)}}}"
     css += f"html{{font-size:{TEXT_SIZES.get(text_size, 100)}% !important;}}"
     css += _BASE_CSS
+    if mode == "dark":
+        css += _DARK_TABLE_CSS
     if compact:
         css += _COMPACT_CSS
     if reduce_motion:
@@ -154,8 +158,13 @@ _BASE_CSS = """
 html, body{background:var(--bg) !important;color:var(--page-text);font-family:var(--font);}
 .stApp{background:var(--page-bg) !important;color:var(--page-text);font-family:var(--font);}
 [data-testid="stAppViewContainer"], [data-testid="stHeader"], [data-testid="stMain"]{background:transparent !important;}
-.stApp *{font-family:var(--font);}
+.stApp *:not([data-testid="stIconMaterial"]):not([class*="material"]):not(.material-icons){font-family:var(--font);}
+.stApp [data-testid="stIconMaterial"],.stApp [class*="material-symbols"]{font-family:"Material Symbols Rounded","Material Symbols Outlined" !important;}
 .block-container{padding-top:1.2rem; max-width:1500px;}
+/* Keep the toolbar readable when the assistant sidebar reduces the page width. */
+.st-key-run_controls [data-testid="stHorizontalBlock"]{flex-wrap:wrap;}
+.st-key-run_controls [data-testid="stColumn"]{flex:1 1 10rem !important;min-width:min(10rem,100%);}
+.st-key-run_controls [data-testid="stColumn"]:last-child{flex:0 0 3.5rem !important;min-width:3.5rem;}
 [data-testid="stMarkdownContainer"], [data-testid="stWidgetLabel"] p, label, label p, label span{color:var(--page-text);}
 [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{color:var(--page-muted) !important;}
 footer{visibility:hidden;}
@@ -181,14 +190,16 @@ footer{visibility:hidden;}
 .listhead span{font-size:.84rem;color:var(--muted);}
 
 /* native widgets */
-.stButton button, .stDownloadButton button, [data-testid="stPopover"] > button{border-radius:6px;font-weight:700;
+.stButton button, .stDownloadButton button, [data-testid="stPopover"] button, [data-testid="stPopoverButton"]{border-radius:6px;font-weight:700;
   min-height:40px;padding:.4rem 1rem;background:var(--btn-bg);border:1px solid var(--btn-border);box-shadow:none;}
-.stButton button p, .stDownloadButton button p, [data-testid="stPopover"] > button p,
-[data-testid="stPopover"] > button span{color:var(--btn-text) !important;font-weight:700;}
+.stButton button p, .stDownloadButton button p, [data-testid="stPopover"] button p,
+[data-testid="stPopover"] button span, [data-testid="stPopover"] button svg{color:var(--btn-text) !important;font-weight:700;}
+[data-testid="stPopover"] button, [data-testid="stPopoverButton"]{background:var(--btn-bg) !important;
+  border:1px solid var(--btn-border) !important;color:var(--btn-text) !important;}
 .stButton button[kind="primary"], .stButton button[data-testid="stBaseButton-primary"]{
   background:var(--primary-bg);border-color:var(--primary-bg);}
 .stButton button[kind="primary"] p, .stButton button[data-testid="stBaseButton-primary"] p{color:var(--primary-text) !important;}
-.stButton button:hover, .stDownloadButton button:hover, [data-testid="stPopover"] > button:hover{
+.stButton button:hover, .stDownloadButton button:hover, [data-testid="stPopover"] button:hover{
   border-color:var(--accent);box-shadow:0 1px 4px rgba(3,45,96,.18);}
 .stButton button[kind="primary"]:hover{background:var(--accent2);border-color:var(--accent2);}
 .stButton button:disabled{opacity:.5;box-shadow:none;}
@@ -218,7 +229,9 @@ button[data-baseweb="tab"]:hover{background:var(--hover);}
 div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
 [data-testid="stExpander"]{background:var(--card);border:1px solid var(--border);border-radius:8px;}
 [data-testid="stExpander"] *{color:var(--text);}
-.stAlert{border-radius:8px;}
+.stAlert, [data-testid="stAlert"], [data-testid="stNotification"]{border-radius:8px;background:var(--card) !important;
+  border:1px solid var(--border-strong);border-left:4px solid var(--pink);}
+.stAlert *, [data-testid="stAlert"] *, [data-testid="stNotification"] *{color:var(--text) !important;}
 
 /* KPI cards: flat, with a colored left edge and one soft circle for personality */
 .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:16px;margin:8px 0 18px;}
@@ -235,6 +248,26 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
 [class*="st-key-kpi_"] button{min-height:0;padding:.2rem .9rem;font-size:.78rem;margin-top:-10px;}
 [class*="st-key-kpi_"] button p{font-size:.78rem;}
 
+
+/* pop-up (st.dialog) */
+div[role="dialog"], [data-testid="stDialog"] div[role="dialog"]{background:var(--card) !important;color:var(--text) !important;}
+div[role="dialog"] h1, div[role="dialog"] h2, div[role="dialog"] h3, div[role="dialog"] h4,
+div[role="dialog"] label p, div[role="dialog"] [data-testid="stMarkdownContainer"] p{color:var(--text) !important;}
+div[role="dialog"] button[aria-label="Close"], div[role="dialog"] button[aria-label="Close"] svg{color:var(--text) !important;}
+
+/* Streamlit's own ? help tooltips: always light text on a dark box (was black on black in light mode) */
+div[data-baseweb="popover"]:has([data-testid="stTooltipContent"]) > div,
+div[data-baseweb="popover"]:has([data-testid="stTooltipContent"]) [data-baseweb="tooltip"],
+div[data-baseweb="tooltip"], [data-testid="stTooltipContent"]{
+  background:var(--strong) !important;border-radius:6px;}
+[data-testid="stTooltipContent"], [data-testid="stTooltipContent"] *,
+div[data-baseweb="tooltip"] *, div[data-baseweb="popover"]:has([data-testid="stTooltipContent"]) *{
+  color:var(--card) !important;-webkit-text-fill-color:var(--card) !important;font-weight:500;}
+[data-tip]:hover::after, [data-tip]:focus::after{background:var(--strong) !important;color:var(--card) !important;
+  -webkit-text-fill-color:var(--card) !important;}
+
+/* clickable table */
+[data-testid="stDataFrame"]{border:1px solid var(--border);border-radius:8px;overflow:hidden;}
 /* hover / tap explanations (pure CSS; tap works on iPad and iPhone) */
 [data-tip]{position:relative;cursor:help;outline:none;}
 [data-tip]:hover::after, [data-tip]:focus::after{content:attr(data-tip);position:absolute;z-index:60;left:0;top:calc(100% + 6px);
@@ -295,6 +328,10 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
   border-bottom:1px solid var(--border);}
 .tbl td{padding:10px 14px;border-bottom:1px solid var(--border);color:var(--text);vertical-align:middle;}
 .tbl tr:last-child td{border-bottom:none;}
+.tbl tbody tr[data-open]{cursor:pointer;}
+.tbl tbody tr[data-open]:hover td{background:var(--hover);}
+[class*="st-key-rowopen_"]{display:none !important;}
+
 .tbl tbody tr:hover td{background:var(--hover);}
 .tbl tr.row-critical td:first-child{box-shadow:inset 4px 0 0 var(--critical);}
 .tbl .id{font-weight:700;color:var(--strong);white-space:nowrap;}
@@ -341,13 +378,15 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
 
 /* tabs: a styled radio so a KPI card can jump to a tab; selected tab gets the underline */
 .st-key-tab div[role="radiogroup"]{gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--border);}
-.st-key-tab label[data-baseweb="radio"]{border-radius:0;padding:10px 16px;margin:0;cursor:pointer;background:transparent;
+.st-key-tab label:is([data-baseweb="radio"],[data-testid="stRadioOption"]){border-radius:0;padding:10px 16px;margin:0;cursor:pointer;background:transparent;
   border-bottom:3px solid transparent;}
 .st-key-tab label[data-baseweb="radio"] > div:first-child{display:none;}
-.st-key-tab label[data-baseweb="radio"] p{color:var(--tab-text);font-weight:600;font-size:.95rem;}
-.st-key-tab label[data-baseweb="radio"]:hover{background:var(--hover);}
-.st-key-tab label[data-baseweb="radio"]:has(input:checked){border-bottom-color:var(--accent);}
-.st-key-tab label[data-baseweb="radio"]:has(input:checked) p{color:var(--tab-sel-text);font-weight:600;}
+/* React Aria radios wrap the indicator and text together in newer Streamlit. */
+.st-key-tab label[data-testid="stRadioOption"] > div > div:first-child{display:none;}
+.st-key-tab label p{color:var(--tab-text);font-weight:600;font-size:.95rem;}
+.st-key-tab label:hover{background:var(--hover);}
+.st-key-tab label:has(input:checked){border-bottom-color:var(--accent);}
+.st-key-tab label:has(input:checked) p{color:var(--tab-sel-text);font-weight:600;}
 
 /* different screens: projector / tablet / phone */
 @media (max-width:1100px){
@@ -365,7 +404,7 @@ div[data-baseweb="tab-highlight"], div[data-baseweb="tab-border"]{display:none;}
   .tbl{min-width:720px;font-size:.78rem;} .tbl th, .tbl td{padding:8px 10px;}
   .tbl td:first-child, .tbl th:first-child{position:sticky;left:0;background:var(--card);z-index:1;}
   .tbl th:first-child{background:var(--card2);z-index:2;}
-  .st-key-tab label[data-baseweb="radio"]{padding:9px 12px;}
+  .st-key-tab label{padding:9px 12px;}
 }
 """
 
@@ -461,7 +500,8 @@ TIPS = {
     "help:reason": "Show only leads sent to review for the reasons you pick.",
     "help:level": "Show only reps of the levels you pick.",
     "help:slider": "Hides reps who are less full than this percentage.",
-    "help:Run Pipeline": "Clean, score and route the full 50,000-lead file to test speed and capacity limits.",
+    "help:Run Sample": "Clean, score and route the 100-lead sample file.",
+    "help:Run Scale": "Clean, score and route the full 50,000-lead file to test speed and capacity limits.",
     "help:Reset": "Clear the results and put every rep back at zero leads. Your manager defaults stay.",
     "help:Dark": "Switch between light and dark mode.",
     "help:lead": "Pick a lead from the rows on this page to see how it was routed.",
@@ -805,7 +845,7 @@ def hero_html(dataset_label=None, pipeline_name=""):
     pill = (f'<span class="pill">{esc(dataset_label)} · {esc(pipeline_name)}</span>'
             if dataset_label else '<span class="pill">Run a dataset</span>')
     return ('<div class="gbar">Lead Operations<span class="sep">|</span><span class="sub">Sales workspace</span></div>'
-            f'<div class="hero"><span class="tile">{_FUNNEL_SVG}</span><div>'
+            f'<div class="hero"><div>'
             '<div class="eyebrow">Sales operations / Lead management</div>'
             '<h1>Lead Prioritization Dashboard</h1>'
             f'<p>The right lead, to the right rep, at the right time.</p></div>{pill}</div>')
@@ -819,7 +859,7 @@ def list_header_html(title, shown, total, sort_label):
 
 def empty_html():
     return (f'<div class="empty">{_EMPTY_SVG}<h2>No results yet</h2>'
-            '<div>Press <b>Run Pipeline</b> to see the prioritized queue.</div></div>')
+            '<div>Press <b>Run Sample</b> or <b>Run Scale</b> to see the prioritized queue.</div></div>')
 
 
 def kpi_card(label, value, sub="", tone="", tip_key=None):
@@ -926,7 +966,7 @@ def _load_tone(fraction):
     return "teal"
 
 
-def leads_table_html(rows, show_status=True, show_reason=True):
+def leads_table_html(rows, show_status=True, show_reason=True, open_prefix=None):
     if not rows:
         return '<div class="empty"><h2>No leads match these filters</h2><div>Try clearing a filter.</div></div>'
     head = ["Priority", "Lead", "Company", "Region", "Industry", "Score"]
@@ -962,12 +1002,13 @@ def leads_table_html(rows, show_status=True, show_reason=True):
         cells.append(f"<td>{rep}</td>")
         if show_reason:
             cells.append(f'<td class="reason">{esc(reason_text(lead))}</td>')
-        body.append(f'<tr class="{cls}">{"".join(cells)}</tr>')
+        hook = f' data-open="rowopen_{open_prefix}_{lead.get("_i")}" title="Click to open this lead"' if open_prefix else ""
+        body.append(f'<tr class="{cls}"{hook}>{"".join(cells)}</tr>')
     header = "".join(f'<th{tip("col:" + h)}>{h}</th>' for h in head)
     return f'<div class="tbl-wrap"><table class="tbl"><thead><tr>{header}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
 
 
-def reps_table_html(reps):
+def reps_table_html(reps, open_prefix=None):
     if not reps:
         return '<div class="empty"><h2>No reps match these filters</h2><div>Try clearing a filter.</div></div>'
     body = []
@@ -975,11 +1016,12 @@ def reps_table_html(reps):
         cap, used = rep.get("max_capacity", 0), rep.get("current_capacity", 0)
         frac = rep_utilization(rep)
         pct = min(frac, 1) * 100
+        hook = f' data-open="rowopen_{open_prefix}_{rep["_i"]}" title="Click to open this rep"' if open_prefix else ""
         load = (f'<div class="load"><div class="top"><span><b>{used}</b> / {cap}</span>'
                 f'<span>{frac * 100:.0f}%</span></div><div class="track">'
                 f'<div class="fill {_load_tone(frac)}" style="width:{pct:.1f}%"></div></div></div>')
         body.append(
-            f'<tr><td class="id">{esc(rep.get("rep_id"))}</td><td>{esc(rep.get("name"))}</td>'
+            f'<tr{hook}><td class="id">{esc(rep.get("rep_id"))}</td><td>{esc(rep.get("name"))}</td>'
             f'<td><span class="tag"{tip(str(rep.get("seniority")))}>{esc(rep.get("seniority"))}</span></td>'
             f'<td>{esc(rep.get("region"))}</td><td>{esc(rep.get("language"))}</td>'
             f'<td>{esc(rep.get("industry"))}</td><td>{load}</td></tr>')
@@ -987,6 +1029,24 @@ def reps_table_html(reps):
                      [("Rep", "Rep"), ("Name", "Name"), ("Level", "Level"), ("Region", "Region"),
                       ("Language", "Language"), ("Industry", "Industry"), ("Load", "Load (assigned / max)")])
     return f'<div class="tbl-wrap"><table class="tbl"><thead><tr>{header}</tr></thead><tbody>{"".join(body)}</tbody></table></div>'
+
+
+def rep_detail_html(rep, leads, limit=50):
+    """The pop-up for one rep: who they are, how full they are and the leads they hold."""
+    cap, used = rep.get("max_capacity", 0), rep.get("current_capacity", 0)
+    frac = rep_utilization(rep)
+    load = (f'<div class="load"><div class="top"><span><b>{used}</b> / {cap} leads</span><span>{frac * 100:.0f}%</span></div>'
+            f'<div class="track"><div class="fill {_load_tone(frac)}" style="width:{min(frac, 1) * 100:.1f}%"></div></div></div>')
+    head = (f'<div class="sub"><span class="tag"{tip(str(rep.get("seniority")))}>{esc(rep.get("seniority"))}</span> &nbsp; '
+            f'<b>{esc(rep.get("rep_id"))}</b> · {esc(rep.get("name"))} · {esc(rep.get("region"))} / '
+            f'{esc(rep.get("language"))} / {esc(rep.get("industry"))}</div>')
+    if leads:
+        shown = sorted(leads, key=lambda l: (PRIORITY_RANK.get(l.get("priority"), 9), -(l.get("score") or 0)))[:limit]
+        note = f'<div class="filter-hint">Showing {len(shown)} of {fmt_int(len(leads))} leads assigned to this rep, most urgent first.</div>'
+        table = leads_table_html(shown, show_status=False, show_reason=False)
+    else:
+        note, table = "", '<div class="filter-hint">No leads are assigned to this rep in the current results.</div>'
+    return f'{head}<div class="why-box"><h4>Capacity</h4>{load}</div>{note}{table}'
 
 
 # --------------------------------------------------------------------------
@@ -1186,8 +1246,11 @@ def candidate_reps(reps, lead, loose=True):
     but Senior before Manager for Critical leads), then the least busy rep. loose=False keeps only perfect matches.
     """
     order = ["Senior", "Manager"] if lead.get("priority") == "Critical" else ["Junior", "Senior", "Manager"]
+    id_counts = Counter(rep.get("rep_id") for rep in reps)
     out = []
     for rep in reps:
+        if not rep.get("rep_id") or id_counts[rep["rep_id"]] != 1:
+            continue  # these rows cannot identify an assignment, just as in the router
         if rep.get("current_capacity", 0) >= rep.get("max_capacity", 0) or rep.get("seniority") not in order:
             continue
         marks = []
@@ -1266,8 +1329,29 @@ def set_override(lead, field, value):
     lead[field] = value
 
 
-def clear_overrides(lead):
-    for field, old in (lead.get("original_values") or {}).items():
+def _review_after_edit(reps, lead, reason):
+    """Release the current assignment and make review the new manual-undo target."""
+    rep_id = lead.get("rep_id")
+    if rep_id:
+        for rep in reps:
+            if rep.get("rep_id") == rep_id:
+                if rep.get("current_capacity", 0) > 0:
+                    rep["current_capacity"] -= 1
+                break
+    lead.update(rep_id="", rep_name="", rep_seniority="",
+                assignment_status=STATUS_REVIEW, reason=reason)
+    lead.pop("manual", None)
+    # An old automatic assignment is no longer valid after its matching fields change.
+    lead["auto"] = {"status": STATUS_REVIEW, "reason": reason}
+
+
+def clear_overrides(reps, lead):
+    """Restore routing fields, release any assignment, and require a fresh review."""
+    originals = lead.get("original_values") or {}
+    if not originals:
+        return
+    _review_after_edit(reps, lead, "Manager changes removed, needs review")
+    for field, old in originals.items():
         lead[field] = old
     lead.pop("overrides", None)
     lead.pop("original_values", None)
@@ -1304,15 +1388,42 @@ def reapply_manager_work(results, saved):
     return kept
 
 
-def find_data_dir(here):
-    """Where the real CSVs live: $LEAD_DATA_DIR, then <dashboard>/data, then <repo root>/data."""
+def _csv_roots(here):
     import os
     from pathlib import Path
-    options = [os.environ.get("LEAD_DATA_DIR"), Path(here) / "data", Path(here).parent / "data"]
-    for option in options:
-        if option and (Path(option) / "leads_scale.csv").exists():
-            return Path(option)
-    return Path(here) / "data"  # nothing found: the app shows a plain "file not found" message
+    here = Path(here)
+    roots = [os.environ.get("LEAD_DATA_DIR"), here / "data", here.parent / "data", here, here.parent, here / "tests" / "fixtures"]
+    return [Path(r) for r in roots if r and Path(r).is_dir()]
+
+
+def find_datasets(here):
+    """Find the sample and scale CSV pairs wherever the team put them.
+
+    A leads file has "lead" in its name, a reps file has "rep" but not "lead";
+    "sample" or "scale" in the name says which dataset it belongs to.
+    Returns {"Sample (100 leads)": (leads_path, reps_path), "Scale (50,000 leads)": (...)}
+    containing only the pairs that were found.
+    """
+    labels = {"sample": "Sample (100 leads)", "scale": "Scale (50,000 leads)"}
+    found = {}
+    for root in _csv_roots(here):
+        for kind, label in labels.items():
+            if label in found:
+                continue
+            files = sorted(root.glob("*.csv"))
+            leads = [f for f in files if "lead" in f.name.lower() and kind in f.name.lower()]
+            reps = [f for f in files if "rep" in f.name.lower() and "lead" not in f.name.lower()
+                    and kind in f.name.lower()]
+            if leads and reps:
+                found[label] = (str(leads[0]), str(reps[0]))
+    return found
+
+
+def find_data_dir(here):
+    """Kept for the preview builder: the folder holding the scale files."""
+    from pathlib import Path
+    pair = find_datasets(here).get("Scale (50,000 leads)")
+    return Path(pair[0]).parent if pair else Path(here) / "data"
 
 
 def file_signature(paths):
@@ -1393,15 +1504,7 @@ def changed_cells(leads, records):
 def edit_value(reps, lead, field, value):
     """Manager types a new value. If the lead already had a rep, that rep is freed and the lead goes back to
     Manager Review, because the old match was based on the old value."""
-    if lead.get("manual"):
-        undo_manual(reps, lead)
-    if lead.get("rep_id"):
-        for rep in reps:
-            if rep.get("rep_id") == lead["rep_id"] and rep.get("current_capacity", 0) > 0:
-                rep["current_capacity"] -= 1
-                break
-        if "auto" not in lead:
-            lead["auto"] = {"status": lead.get("assignment_status"), "reason": lead.get("reason")}
-        lead.update(rep_id="", rep_name="", rep_seniority="", assignment_status=STATUS_REVIEW,
-                    reason="Value changed by a manager, needs a rep")
+    if lead.get(field) == value:
+        return
+    _review_after_edit(reps, lead, "Value changed by a manager, needs a rep")
     set_override(lead, field, value)

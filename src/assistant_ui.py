@@ -18,11 +18,13 @@ SIDEBAR_CSS = """<style>
 [data-testid="stSidebar"] h3 {color:var(--strong);}
 [data-testid="stSidebar"] [data-testid="stChatMessage"],
 [data-testid="stSidebar"] [data-testid="stChatInput"],
+[data-testid="stSidebar"] [data-testid="stChatInput"] > div,
 [data-testid="stSidebar"] [data-testid="stAlertContainer"] {
   background:var(--card) !important; color:var(--page-text); border:1px solid var(--border);}
 [data-testid="stSidebar"] textarea {background:var(--card) !important; color:var(--text) !important;
   -webkit-text-fill-color:var(--text);}
 [data-testid="stSidebar"] textarea::placeholder {color:var(--muted) !important; -webkit-text-fill-color:var(--muted);}
+[data-testid="stSidebar"] [data-testid="stChatInputSubmitButton"] {color:var(--btn-text);background:var(--card2);}
 [data-testid="stSidebar"] [data-testid="stIconMaterial"] {font-family:"Material Symbols Rounded" !important;}
 </style>"""
 

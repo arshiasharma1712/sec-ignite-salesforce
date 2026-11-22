@@ -1,4 +1,4 @@
-"""Lead Prioritization Dashboard - Streamlit dashboard.
+﻿"""Lead Prioritization Dashboard - Streamlit dashboard.
 
 Run with:  streamlit run app.py
 
@@ -12,35 +12,40 @@ from pathlib import Path
 
 from datetime import datetime
 
+import inspect
+
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE))  # repo root, so the team's src/ package can be found
+sys.path.insert(0, str(HERE))
 
 from src import dashboard_helpers as H
 from src.assistant_ui import clear_assistant_history, render_assistant
 
-# The dashboard runs the team's verified pipeline (load, clean, score, route) through a small adapter
-# that renames fields for the screens. No scoring or routing happens in this file.
+# Keep main's verified normalization/scoring/routing adapter as the single entry point.
 from src.dashboard_adapter import run_pipeline
 PIPELINE_NAME = "team pipeline"
 
-DATA_DIR = H.find_data_dir(HERE)  # the team's CSVs (see README: where the data goes)
-DATASETS = {
+DATA_DIR = HERE / "data"
+# the team's CSVs, found by name (leads/reps + sample/scale); missing pairs give a plain "file not found" message
+DATASETS = H.find_datasets(HERE) or {
     "Sample (100 leads)": ("leads_sample.csv", "reps_sample.csv"),
     "Scale (50,000 leads)": ("leads_scale.csv", "reps_scale.csv"),
 }
+DATASETS.setdefault("Sample (100 leads)", ("leads_sample.csv", "reps_sample.csv"))
+DATASETS.setdefault("Scale (50,000 leads)", ("leads_scale.csv", "reps_scale.csv"))
 PAGE_SIZES = [25, 50, 100]
 CAND_PAGE = 10  # reps shown per page in the manager-action list
 # the ☰ Settings menu: key -> starting value
 SETTINGS_DEFAULTS = {"theme": "Light", "text_size": "Normal", "density": "Comfortable",
-                     "hc": False, "motion": False}
+                     "hc": False, "motion": False, "grid_tables": False}
 LEAD_EXPORT_FIELDS = ["lead_id", "company", "region", "language", "industry", "company_size",
                       "activity", "vip", "score", "priority", "assignment_status",
                       "rep_id", "rep_name", "reason"]
 
-st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️", layout="wide", initial_sidebar_state="collapsed")
 
 
 # ---------------------------------------------------------------- state ----
@@ -48,16 +53,18 @@ LIVE_LABEL = "Live link"
 
 
 def source_paths(label):
-    """(leads CSV path, reps CSV path, fingerprint) for a dataset. For the live link the sheets are downloaded
-    into a temporary folder first; the fingerprint changes whenever someone edits the sheet or file."""
+    """CSV paths and a fingerprint for bundled files or the manager's live links."""
     if label == LIVE_LABEL:
-        folder = Path(st.session_state.setdefault("live_dir", tempfile.mkdtemp(prefix="ignite_live_")))
+        if not st.session_state.get("live_dir"):
+            st.session_state.live_dir = tempfile.mkdtemp(prefix="ignite_live_")
+        folder = Path(st.session_state.live_dir)
         leads, reps = folder / "leads.csv", folder / "reps.csv"
-        sig = (H.download_csv(st.session_state.get("live_leads_url"), leads, "lead_id"),
-               H.download_csv(st.session_state.get("live_reps_url"), reps, "rep_id"))
-        return str(leads), str(reps), sig
+        signature = (H.download_csv(st.session_state.get("live_leads_url"), leads, "lead_id"),
+                     H.download_csv(st.session_state.get("live_reps_url"), reps, "rep_id"))
+        return str(leads), str(reps), signature
     leads_file, reps_file = DATASETS[label]
-    paths = [DATA_DIR / leads_file, DATA_DIR / reps_file]
+    paths = [Path(leads_file) if Path(leads_file).is_absolute() else DATA_DIR / leads_file,
+             Path(reps_file) if Path(reps_file).is_absolute() else DATA_DIR / reps_file]
     return str(paths[0]), str(paths[1]), H.file_signature(paths)
 
 
@@ -91,6 +98,8 @@ def run_dataset(label, keep_view=False):
         results["defaults_used"], results["defaults_filled"] = dict(defaults), counts
         for position, lead in enumerate(results.get("leads", [])):
             lead["_i"] = position  # lets a manager action find its lead again
+        for position, rep in enumerate(results.get("reps", [])):
+            rep["_i"] = position  # Rep_ID may be missing or duplicated; identify the row instead
         if keep_view:  # live refresh: keep the manager's work and the screen as it was
             st.session_state.kept_edits = H.reapply_manager_work(results, saved)
         else:
@@ -103,8 +112,8 @@ def run_dataset(label, keep_view=False):
         st.session_state.error = None
         clear_assistant_history()
     except FileNotFoundError as error:
-        st.session_state.error = f"Could not find {Path(error.filename or '').name}. Put the CSVs in the data/ folder."
-    except ValueError as error:  # a bad live link: say what to fix
+        st.session_state.error = f"Could not find {Path(error.filename or '').name}. Put the team's CSVs in the repo's data/ folder."
+    except ValueError as error:
         st.session_state.error = str(error)
     except Exception as error:  # keep the demo alive and show what happened
         st.session_state.error = f"The pipeline failed: {error}"
@@ -117,7 +126,7 @@ def reset_all():
     """Clear outputs. The pipeline re-reads the CSVs on every run, so rep
     capacities always start back at their baseline (0) after a reset."""
     for key in list(st.session_state.keys()):
-        if key not in SETTINGS_DEFAULTS and not key.startswith(("def", "live_")):  # keep settings, manager defaults and links
+        if key not in SETTINGS_DEFAULTS and not key.startswith(("def", "live_")):  # keep settings, defaults and links
             del st.session_state[key]
 
 
@@ -170,10 +179,18 @@ def jump(tab, filters):
     st.session_state["tab"] = tab
 
 
+def _poke():
+    """Inside a pop-up, ask it to refresh the whole page (and close) after an action."""
+    if st.session_state.get("_dlg"):
+        st.session_state["_refresh"] = True
+
+
 def do_assign(lead_index, rep_id):
+    _poke()
     data = st.session_state.get("results") or {}
     lead = data["leads"][lead_index]
-    rep = next((r for r in data["reps"] if r.get("rep_id") == rep_id), None)
+    matches = [r for r in data["reps"] if rep_id and r.get("rep_id") == rep_id]
+    rep = matches[0] if len(matches) == 1 else None
     if rep and H.assign_manually(lead, rep):
         st.toast(f'{lead["lead_id"]} assigned to {rep["rep_id"]} · {rep.get("name")}')
     else:
@@ -181,12 +198,14 @@ def do_assign(lead_index, rep_id):
 
 
 def do_handle(lead_index):
+    _poke()
     lead = st.session_state["results"]["leads"][lead_index]
     H.mark_handled(lead)
     st.toast(f'{lead["lead_id"]} marked as handled')
 
 
 def do_override(lead_index, field, widget_key):
+    _poke()
     lead = st.session_state["results"]["leads"][lead_index]
     value = st.session_state.get(widget_key)
     if value:
@@ -195,7 +214,9 @@ def do_override(lead_index, field, widget_key):
 
 
 def do_clear_override(lead_index):
-    H.clear_overrides(st.session_state["results"]["leads"][lead_index])
+    _poke()
+    data = st.session_state["results"]
+    H.clear_overrides(data["reps"], data["leads"][lead_index])
     st.toast("Fallback removed from this lead")
 
 
@@ -234,6 +255,7 @@ def edit_panel(rows, key):
 
 
 def do_undo(lead_index):
+    _poke()
     data = st.session_state["results"]
     H.undo_manual(data["reps"], data["leads"][lead_index])
     st.toast("Sent back to where the pipeline had it")
@@ -252,7 +274,12 @@ def lead_panel(rows, key, actions):
         "Open a lead", options, key=pick_key, help=H.help_text("lead"),
         format_func=lambda i: f'{by_index[i]["lead_id"]} · {by_index[i]["company"]} · '
                               f'{by_index[i]["priority"]} · score {by_index[i]["score"]} · {by_index[i]["assignment_status"]}')
-    lead = by_index[chosen]
+    lead_body(by_index[chosen], key, actions)
+
+
+def lead_body(lead, key, actions):
+    """Everything about one lead: its summary, manager actions and the 'Why this rep?' box."""
+    chosen = lead["_i"]
     all_reps = st.session_state["results"]["reps"]
     st.markdown(f'<div class="sub">{H.priority_badge(lead["priority"])} {H.status_badge(lead["assignment_status"])}'
                 + (f' <span class="vip"{H.tip("VIP")}>VIP</span>' if lead.get("vip") else "")
@@ -304,25 +331,197 @@ def lead_panel(rows, key, actions):
 
 
 
+# ------------------------------------------ click a row -> pop-up ----------
+_dialog = getattr(st, "dialog", None) or getattr(st, "experimental_dialog", None)
+try:
+    HAS_ROW_CLICK = _dialog is not None and "on_select" in inspect.signature(st.dataframe).parameters
+except (TypeError, ValueError):
+    HAS_ROW_CLICK = False
+PRIORITY_DOT = {"Critical": "🔴 Critical", "High": "🟠 High", "Medium": "🟡 Medium", "Low": "⚪ Low"}
+
+
+def lead_edit_box(lead, key):
+    """Edit mode, inside the pop-up: change a lead's Region / Language / Industry. Never written to the CSV."""
+    chosen = lead["_i"]
+    reps_now = st.session_state["results"]["reps"]
+    st.markdown('<div class="why-box"><h4>Edit mode is on</h4>Change this lead\'s Region, Language or Industry, then press '
+                '<b>Save changes</b>. It applies to this lead only, is marked with a pink * and is never written to the CSV. '
+                'If the lead already had a rep, it goes back to Manager Review so you can pick the right one.</div>',
+                unsafe_allow_html=True)
+    cols = st.columns(len(H.SKILL_KEYS))
+    picked = {}
+    for column, field in zip(cols, H.SKILL_KEYS):
+        current = str(lead.get(field))
+        options = sorted({str(r.get(field)) for r in reps_now if r.get(field) not in (None, "", "Unknown")}
+                         | ({current} - {"Unknown"}))
+        picked[field] = column.selectbox(field.capitalize(), options, key=f"{key}_ed_{field}_{chosen}",
+                                         index=options.index(current) if current in options else None,
+                                         placeholder=f"Choose a {field}")
+    left, right = st.columns([1, 1])
+    if left.button("Save changes", type="primary", key=f"{key}_ed_save_{chosen}", use_container_width=True):
+        changes = [(f, v) for f, v in picked.items() if v and v != lead.get(f)]
+        if not changes:
+            st.toast("Nothing to change")
+        else:
+            for field, value in changes:
+                H.edit_value(reps_now, lead, field, value)
+            st.toast(f'{lead["lead_id"]}: {len(changes)} value(s) changed')
+            st.rerun()
+    if lead.get("overrides") and right.button("↩ Remove my changes", key=f"{key}_ed_undo_{chosen}", use_container_width=True):
+        H.clear_overrides(reps_now, lead)
+        st.toast("Changes removed from this lead")
+        st.rerun()
+
+
+if _dialog is not None:
+    @_dialog("Lead details", width="large")
+    def lead_dialog(lead_index, key, actions):
+        st.session_state["_dlg"] = True
+        if st.session_state.pop("_refresh", False):
+            st.rerun()  # an action was taken: redraw the page behind the pop-up and close it
+        lead = st.session_state["results"]["leads"][lead_index]
+        if st.session_state.get("edit_mode"):
+            lead_edit_box(lead, key)
+        lead_body(lead, key, actions)
+
+    @_dialog("Rep details", width="large")
+    def rep_dialog(rep_index):
+        data = st.session_state["results"]
+        if not 0 <= rep_index < len(data["reps"]):
+            st.caption("That rep is not in the current results.")
+            return
+        rep = data["reps"][rep_index]
+        rep_id = rep.get("rep_id")
+        unique_id = rep_id and sum(r.get("rep_id") == rep_id for r in data["reps"]) == 1
+        assigned = [lead for lead in data["leads"]
+                    if unique_id and lead.get("assignment_status") == H.STATUS_ASSIGNED
+                    and lead.get("rep_id") == rep_id]
+        st.markdown(H.rep_detail_html(rep, assigned), unsafe_allow_html=True)
+
+
+def lead_frame(rows, show_status=True, show_reason=True):
+    data = []
+    for lead in rows:
+        tags = ("  ★ VIP" if lead.get("vip") else "") + ("  (defaulted)" if (lead.get("defaults_applied") or lead.get("overrides")) else "")
+        row = {"Priority": PRIORITY_DOT.get(lead.get("priority"), str(lead.get("priority"))),
+               "Lead": f'{lead.get("lead_id")}{tags}', "Company": lead.get("company"),
+               "Region": lead.get("region"), "Industry": lead.get("industry"), "Score": int(lead.get("score", 0))}
+        if show_status:
+            row["Status"] = lead.get("assignment_status")
+        row["Rep"] = f'{lead["rep_id"]} {lead.get("rep_name") or ""}'.strip() if lead.get("rep_id") else "-"
+        if show_reason:
+            row["Reason"] = H.reason_text(lead)
+        data.append(row)
+    return pd.DataFrame(data)
+
+
+def rep_frame(rows):
+    return pd.DataFrame([{"Rep ID": r.get("rep_id"), "Name": r.get("name"), "Level": r.get("seniority"),
+                          "Region": r.get("region"), "Language": r.get("language"), "Industry": r.get("industry"),
+                          "Used": r.get("current_capacity", 0), "Capacity": r.get("max_capacity", 0),
+                          "Full %": round(H.rep_utilization(r) * 100)} for r in rows])
+
+
+def clickable_table(frame, items, key, opener):
+    """A table where clicking a row calls opener(item). Row n of the frame is items[n]."""
+    version = st.session_state.get(f"{key}_ver", 0)
+    config = {}
+    if "Score" in frame.columns:
+        config["Score"] = st.column_config.ProgressColumn("Score", min_value=0, max_value=100, format="%d")
+    if "Full %" in frame.columns:
+        config["Full %"] = st.column_config.ProgressColumn("Full %", min_value=0, max_value=100, format="%d%%")
+    args = dict(key=f"{key}_tbl_{version}", hide_index=True, on_select="rerun", selection_mode="single-row",
+                column_config=config, height=min(35 * len(frame) + 40, 600))
+    try:
+        event = st.dataframe(frame, use_container_width=True, **args)
+    except TypeError:  # newer Streamlit: tables stretch by default
+        event = st.dataframe(frame, **args)
+    picked = event.selection.rows
+    if picked and picked[0] < len(items):
+        st.session_state[f"{key}_ver"] = version + 1  # next run: a fresh table, so the same row can be clicked again
+        st.session_state.pop("_refresh", None)
+        opener(items[picked[0]])
+
+
+ROW_CLICK_JS = """<script>
+(function () {
+  var p = window.parent, d = p.document;
+  if (p.__ignRowHandler) d.removeEventListener('click', p.__ignRowHandler, true);
+  p.__ignRowHandler = function (e) {
+    var tr = e.target && e.target.closest ? e.target.closest('tr[data-open]') : null;
+    if (!tr) return;
+    var btn = d.querySelector('.st-key-' + tr.getAttribute('data-open') + ' button');
+    if (btn) btn.click();
+  };
+  d.addEventListener('click', p.__ignRowHandler, true);
+})();
+</script>"""
+
+
+def row_openers(rows, prefix, kind, actions=False):
+    """Makes the original colored table rows clickable: a click on a row presses that row's hidden button."""
+    components.html(ROW_CLICK_JS, height=0)
+    for row in rows:
+        ident = row["_i"]
+        if st.button("open", key=f"rowopen_{prefix}_{ident}"):
+            st.session_state.pop("_refresh", None)
+            if kind == "lead":
+                lead_dialog(ident, prefix, actions)
+            else:
+                rep_dialog(ident)
+
+
+def show_leads(rows, key, actions, **kwargs):
+    if HAS_ROW_CLICK and rows:
+        edit_hint = " and edit it" if st.session_state.get("edit_mode") else ""
+        if st.session_state.get("grid_tables"):
+            st.caption(f"👆 Click any row to open its details{edit_hint}.")
+            clickable_table(lead_frame(rows, **kwargs), rows, key, lambda lead: lead_dialog(lead["_i"], key, actions))
+            return
+        st.caption(f"👆 Click any row to open its details{edit_hint}.")
+        st.markdown(H.leads_table_html(rows, open_prefix=key, **kwargs), unsafe_allow_html=True)
+        row_openers(rows, key, "lead", actions)
+        return
+    st.markdown(H.leads_table_html(rows, **kwargs), unsafe_allow_html=True)
+    if not rows:
+        return
+    if actions:
+        st.markdown("#### Act on a lead")
+        lead_panel(rows, key, actions=True)
+    else:
+        with st.expander("Open a lead: score and why this rep"):
+            lead_panel(rows, key, actions=False)
+
+
+def show_reps(rows):
+    if HAS_ROW_CLICK and rows:
+        st.caption("👆 Click any row to see that rep's leads and capacity.")
+        if st.session_state.get("grid_tables"):
+            clickable_table(rep_frame(rows), rows, "p", lambda rep: rep_dialog(rep["_i"]))
+            return
+        st.markdown(H.reps_table_html(rows, open_prefix="p"), unsafe_allow_html=True)
+        row_openers(rows, "p", "rep")
+        return
+    st.markdown(H.reps_table_html(rows), unsafe_allow_html=True)
+
+
 @st.fragment(run_every=30)
 def live_watch():
-    """Every 30 seconds: if the CSV files (or the live link's sheets) changed, re-run so the dashboard matches them.
-    Manager work (assigned / handled / fixed values) is kept. Nothing is ever written back to the file or sheet."""
+    """Refresh changed CSVs/links while retaining manager work; sources stay unchanged."""
     label = st.session_state.get("dataset")
     if not label:
         return
     try:
         now = source_paths(label)[2]
         problem = ""
-    except ValueError as error:
-        now, problem = None, str(error)
+    except ValueError:
+        now, problem = None, "Could not refresh the live links; showing the last loaded results."
     if now is not None and st.session_state.get("file_sig") not in (None, now):
         st.session_state.refresh_dataset = label
         st.rerun()
-    note = (f'<b style="color:var(--pink)">●</b> Can\'t reach the link right now, still showing the last data loaded at '
-            f'{st.session_state.get("refreshed_at", "-")}.' if problem else
-            f'<b>●</b> Live · checked {datetime.now().strftime("%H:%M:%S")} · last loaded {st.session_state.get("refreshed_at", "-")}')
-    st.markdown(f'<div class="live">{note}</div>', unsafe_allow_html=True)
+    source = problem or ("Reading live CSV links" if label == LIVE_LABEL else "Reading the team CSV files")
+    st.markdown(f'<div class="live"><b>●</b> {source} · checked {datetime.now().strftime("%H:%M:%S")} · '
+                f'last loaded {st.session_state.get("refreshed_at", "-")}</div>', unsafe_allow_html=True)
 
 
 # --------------------------------------------------------------- header ----
@@ -340,25 +539,16 @@ results = st.session_state.get("results")
 
 st.markdown(H.hero_html(st.session_state.get("dataset"), PIPELINE_NAME), unsafe_allow_html=True)
 
-c_sample, c_scale, c_reset, c_live, c_edit, c_edits, c_settings = st.columns([1.3, 1.5, .9, 1.4, 1.4, 1.6, .6])
-if c_sample.button("▶ Run Sample", use_container_width=True, help="Run the pipeline on the 100-lead sample dataset."):
+c_sample, c_scale, c_reset, c_edit, c_edits, c_settings = st.container(key="run_controls").columns([1.2, 1.2, 1, 1.4, 1.6, .6])
+if c_sample.button("▶ Run Sample", type="primary", use_container_width=True, help=H.help_text("Run Sample")):
     run_dataset("Sample (100 leads)")
     st.rerun()
-if c_scale.button("▶ Run Scale", type="primary", use_container_width=True, help=H.help_text("Run Pipeline")):
+if c_scale.button("▶ Run Scale", type="primary", use_container_width=True, help=H.help_text("Run Scale")):
     run_dataset("Scale (50,000 leads)")
     st.rerun()
 if c_reset.button("↺ Reset", use_container_width=True, help=H.help_text("Reset")):
     reset_all()
     st.rerun()
-with c_live.popover("🔗 Live link", use_container_width=True):
-    st.markdown("**Live link**")
-    st.caption("Paste a Google Sheet (set to 'Anyone with the link can view') or any CSV link. The dashboard checks it every "
-               "30 seconds and updates when anyone edits it. It only reads the sheet; nothing is written back.")
-    st.text_input("Leads link", key="live_leads_url", placeholder="https://docs.google.com/spreadsheets/d/...")
-    st.text_input("Reps link", key="live_reps_url", placeholder="https://docs.google.com/spreadsheets/d/...")
-    if st.button("▶ Run from link", type="primary", key="live_run", use_container_width=True):
-        run_dataset(LIVE_LABEL)
-        st.rerun()
 _editing = bool(st.session_state.get("edit_mode"))
 c_edit.button("✎ Edit mode: ON" if _editing else "✎ Edit mode", key="edit_on" if _editing else "edit_off",
               on_click=toggle_edit_mode, use_container_width=True,
@@ -397,8 +587,17 @@ with c_settings.popover("☰", use_container_width=True):
     st.radio("Table density", H.DENSITIES, key="density", horizontal=True)
     st.caption("Accessibility")
     st.toggle("High contrast", key="hc", help="Stronger text and borders so everything is easier to read.")
+    st.toggle("Grid tables (use if rows don't open)", key="grid_tables",
+              help="Off: the original colored tables, click a row to open it. On: spreadsheet-style tables, also click a row.")
     st.toggle("Reduce motion", key="motion", help="Turns off hover animations and transitions.")
     st.button("Reset settings", key="settings_reset", use_container_width=True, on_click=reset_settings)
+    with st.expander("Live link"):
+        st.caption("Read a shared Google Sheet or CSV link. Changes are checked every 30 seconds; nothing is written back.")
+        st.text_input("Leads link", key="live_leads_url", placeholder="https://docs.google.com/spreadsheets/d/...")
+        st.text_input("Reps link", key="live_reps_url", placeholder="https://docs.google.com/spreadsheets/d/...")
+        if st.button("▶ Run from link", type="primary", key="live_run", use_container_width=True):
+            run_dataset(LIVE_LABEL)
+            st.rerun()
 st.markdown(H.build_css("dark" if st.session_state.theme == "Dark" else "light",
                         st.session_state.text_size, st.session_state.hc,
                         st.session_state.motion, st.session_state.density == "Compact"), unsafe_allow_html=True)
@@ -478,11 +677,7 @@ elif tab == "Lead Queue":
                             file_name="lead_queue.csv", mime="text/csv", use_container_width=True)
     page = pager("q_page", H.paginate(shown, 1, size)[2], size)
     page_rows, _, _ = H.paginate(shown, page, size)
-    if st.session_state.get("edit_mode"):
-        edit_panel(page_rows, "q")
-    st.markdown(H.leads_table_html(page_rows), unsafe_allow_html=True)
-    with st.expander("Open a lead: score and why this rep"):
-        lead_panel(page_rows, "q", actions=False)
+    show_leads(page_rows, "q", actions=False)
 
 # ------------------------------------------------------- manager review ----
 elif tab == "Manager Review":
@@ -513,11 +708,7 @@ elif tab == "Manager Review":
         st.caption(f"{H.fmt_int(len(r_rows))} leads {'waiting for a manager - critical first' if view == 'Waiting' else 'marked as handled'}")
         page = pager("r_page", H.paginate(r_rows, 1, 50)[2], 50)
         page_rows, _, _ = H.paginate(r_rows, page, 50)
-        if st.session_state.get("edit_mode"):
-            edit_panel(page_rows, "r")
-        st.markdown(H.leads_table_html(page_rows, show_status=False), unsafe_allow_html=True)
-        st.markdown("#### Act on a lead")
-        lead_panel(page_rows, "r", actions=True)
+        show_leads(page_rows, "r", actions=True, show_status=False)
 
 # ------------------------------------------------------- rep capacity -----
 else:
@@ -542,4 +733,4 @@ else:
     st.caption(f"{H.fmt_int(len(p_rows))} of {H.fmt_int(len(reps))} reps")
     page = pager("p_page", H.paginate(p_rows, 1, 25)[2], 25)
     page_rows, _, _ = H.paginate(p_rows, page, 25)
-    st.markdown(H.reps_table_html(page_rows), unsafe_allow_html=True)
+    show_reps(page_rows)

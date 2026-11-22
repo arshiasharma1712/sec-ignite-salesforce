@@ -100,7 +100,7 @@ def test_search_uses_current_fields_after_manager_edit_and_undo(assistant_result
     lead["defaults_applied"] = ["Region"]
     H.edit_value(assistant_results["reps"], lead, "region", "Asia-Pacific")
     assert lead["original_values"]["region"] == "Europe"
-    assert lead["auto"]["status"] == "Assigned"
+    assert lead["auto"]["status"] == "Manager Review"
     baseline = deepcopy(assistant_results)
     context = AssistantContext(assistant_results)
     for previous_value in ("Europe", "Assigned"):
@@ -109,7 +109,7 @@ def test_search_uses_current_fields_after_manager_edit_and_undo(assistant_result
     assert context.query_leads({"search": "Asia-Pacific"})["total_matches"] == 1
     assert context.query_leads({"search": "Manager Review"})["total_matches"] == 1
     assert assistant_results == baseline
-    H.clear_overrides(lead)
+    H.clear_overrides(assistant_results["reps"], lead)
     assert AssistantContext(assistant_results).query_leads({"search": "Europe"})["total_matches"] == 1
 
 
