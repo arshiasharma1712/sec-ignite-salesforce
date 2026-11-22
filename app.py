@@ -19,6 +19,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))  # repo root, so the team's src/ package can be found
 
 from src import dashboard_helpers as H
+from src.assistant_ui import clear_assistant_history, render_assistant
 
 # The dashboard runs the team's verified pipeline (load, clean, score, route) through a small adapter
 # that renames fields for the screens. No scoring or routing happens in this file.
@@ -39,7 +40,7 @@ LEAD_EXPORT_FIELDS = ["lead_id", "company", "region", "language", "industry", "c
                       "activity", "vip", "score", "priority", "assignment_status",
                       "rep_id", "rep_name", "reason"]
 
-st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️", layout="wide")
+st.set_page_config(page_title="Lead Prioritization Dashboard", page_icon="☁️", layout="wide", initial_sidebar_state="expanded")
 
 
 # ---------------------------------------------------------------- state ----
@@ -100,6 +101,7 @@ def run_dataset(label, keep_view=False):
         st.session_state.results = results
         st.session_state.dataset = label
         st.session_state.error = None
+        clear_assistant_history()
     except FileNotFoundError as error:
         st.session_state.error = f"Could not find {Path(error.filename or '').name}. Put the CSVs in the data/ folder."
     except ValueError as error:  # a bad live link: say what to fix
@@ -415,6 +417,7 @@ if st.session_state.get("error"):
     st.error(st.session_state.error)
 
 live_watch()
+render_assistant()
 
 if not results:
     st.markdown(H.empty_html(), unsafe_allow_html=True)

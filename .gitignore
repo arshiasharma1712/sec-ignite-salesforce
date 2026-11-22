@@ -11,6 +11,7 @@ venv/
 
 # Local environment and secrets
 .env
+.streamlit/secrets.toml
 
 # Generated output from scripts/export_cleaned.py
 cleaned/
