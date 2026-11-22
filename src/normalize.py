@@ -402,6 +402,7 @@ def normalize_leads(raw_leads, warnings):
                 "record_id": record_id,
                 "company_name": _text(raw.get("Company_Name")),
                 "region": _region(raw.get("Region"), "lead", record_id, warnings, flags),
+                "region_original": _text(raw.get("Region")),
                 "language": _alias(raw.get("Language"), LANGUAGE_ALIASES, "lead", record_id, "language", warnings, flags),
                 "industry": _alias(raw.get("Industry_Vertical"), INDUSTRY_ALIASES, "lead", record_id, "industry", warnings, flags),
                 "company_size": size,

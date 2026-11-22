@@ -35,6 +35,7 @@ from src.data_loader import load_data
 from src.normalize import normalize_data, summarize_warnings
 from src.routing import route_leads
 from src.scoring import score_leads
+from src.ml_anomaly import flag_anomalies, split_for_review
 
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -120,15 +121,10 @@ def build_metrics(scored: list[dict], routed: dict[str, Any], warnings: list[dic
     }
 
 
-def run_pipeline(leads_path, reps_path, dataset: Optional[str] = None) -> dict[str, Any]:
-    """Load, clean, score and route one pair of CSV files.
 
-    Raises FileNotFoundError if a path does not exist and SchemaError (a
-    ValueError) if a required column is missing. Everything else, including
-    messy or missing values, is handled by the cleaning policies and shows up
-    in ``normalization_warnings`` or the Manager Review queue.
-    """
+def run_pipeline(leads_path, reps_path, dataset: Optional[str] = None) -> dict[str, Any]:
     started = time.perf_counter()
+
     raw_leads, raw_reps = load_data(leads_path, reps_path)
     loaded = time.perf_counter()
 
@@ -138,33 +134,75 @@ def run_pipeline(leads_path, reps_path, dataset: Optional[str] = None) -> dict[s
     scored = score_leads(leads)
     scored_at = time.perf_counter()
 
-    routed = route_leads(scored, baseline_reps)
-    finished = time.perf_counter()
+    # Detect anomalies before assigning representatives.
+    checked = flag_anomalies(scored)
 
-    outcomes = sorted(routed["assignments"] + routed["overflow"],
-                      key=lambda row: row["source_index"])
+    # Preserve each lead's original position through routing.
+    for index, lead in enumerate(checked):
+        lead["_ml_original_index"] = index
+
+    normal_leads, anomaly_review = split_for_review(checked)
+
+    # Suspicious leads do not consume rep capacity.
+    routing_started = time.perf_counter()
+    routed = route_leads(normal_leads, baseline_reps)
+    routing_finished = time.perf_counter()
+
+    # Restore original indices and remove temporary internal field.
+    for row in routed["assignments"] + routed["overflow"] + anomaly_review:
+        row["source_index"] = row.pop("_ml_original_index")
+
+    for row in checked:
+        row.pop("_ml_original_index", None)
+
+    # Merge ML review leads with regular routing overflow.
+    routed["overflow"].extend(anomaly_review)
+
+    total = len(checked)
+    assigned = len(routed["assignments"])
+    review = len(routed["overflow"])
+
+    # Update metrics to include ML review leads.
+    routed["metrics"]["total_leads"] = total
+    routed["metrics"]["assigned_count"] = assigned
+    routed["metrics"]["manager_review_count"] = review
+    routed["metrics"]["assignment_rate"] = (
+        assigned / total if total else 0.0
+    )
+    routed["metrics"]["review_counts_by_reason"] = dict(
+        Counter(row.get("reason") or "Unknown" for row in routed["overflow"])
+    )
+
+    outcomes = sorted(
+        routed["assignments"] + routed["overflow"],
+        key=lambda row: row["source_index"]
+    )
+
     summary = [
         {"entity": e, "field": f, "action": a, "count": c}
         for (e, f, a), c in sorted(summarize_warnings(warnings).items())
     ]
+
     return {
         "dataset": dataset,
         "outcomes": outcomes,
         "assignments": routed["assignments"],
         "overflow": routed["overflow"],
-        "scored_leads": scored,
+        "scored_leads": checked,
         "baseline_reps": baseline_reps,
         "updated_reps": routed["updated_reps"],
         "rep_warnings": routed["rep_warnings"],
         "normalization_warnings": warnings,
         "warning_summary": summary,
-        "metrics": build_metrics(scored, routed, warnings, routed["updated_reps"]),
+        "metrics": build_metrics(
+            checked, routed, warnings, routed["updated_reps"]
+        ),
         "timings": {
             "load": loaded - started,
             "normalize": normalized - loaded,
             "score": scored_at - normalized,
-            "routing_only": finished - scored_at,
-            "total": finished - started,
+            "routing_only": routing_finished - routing_started,
+            "total": time.perf_counter() - started,
         },
     }
 

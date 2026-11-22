@@ -309,6 +309,7 @@ div[data-baseweb="tooltip"] *, div[data-baseweb="popover"]:has([data-testid="stT
   background:var(--low-bg);color:var(--on-low);}
 .vip{display:inline-block;margin-left:6px;padding:0 7px;border-radius:4px;font-size:.64rem;font-weight:800;
   background:var(--purple);color:#FFFFFF;}
+.ai-flag{display:inline-block;margin-left:6px;padding:0 7px;border-radius:4px;font-size:.64rem;font-weight:800;background:var(--pink-solid);color:#FFFFFF;}
 .dflt{display:inline-block;margin-left:6px;padding:0 7px;border-radius:4px;font-size:.62rem;font-weight:800;
   background:var(--pink-solid);color:#FFFFFF;cursor:help;}
 .st-key-edit_off button{background:var(--btn-bg) !important;border:1px solid var(--accent) !important;}
@@ -481,6 +482,9 @@ TIPS = {
     "col:Company": "The prospective customer's company name.",
     "col:Region": "Where the lead is. Reps only get leads from their own region.",
     "col:Industry": "The lead's industry. Reps only get leads in their area of expertise.",
+    "col:Language": "The lead's language. Reps must match the lead's language.",
+    "AI FLAG": "Flagged by the AI anomaly detector for review. This does not automatically change routing.",
+    "AI Anomalies": "Number of leads explicitly flagged by the AI anomaly detector.",
     "col:Score": "Points from company size, recent activity and industry. VIPs are always 100.",
     "col:Status": "Assigned to a rep, or waiting in Manager Review.",
     "col:Rep": "The rep who owns this lead. Hover a rep's name to see why they were chosen.",
@@ -663,6 +667,15 @@ def is_waiting(lead):
     return lead.get("assignment_status") not in (STATUS_ASSIGNED, STATUS_HANDLED)
 
 
+def ai_flagged(lead):
+    """Use an explicit anomaly flag from the pipeline, never infer AI output from missing data."""
+    for key in ("anomaly_flag", "ai_anomaly", "is_anomaly", "anomaly_detected", "ai_flagged"):
+        value = lead.get(key)
+        if value is True or (isinstance(value, str) and value.strip().lower() in ("true", "yes", "1")) or (isinstance(value, int) and value == 1):
+            return True
+    return False
+
+
 def compute_kpis(results):
     leads = results.get("leads", [])
     reps = results.get("reps", [])
@@ -675,6 +688,7 @@ def compute_kpis(results):
     cap_used = sum(rep.get("current_capacity", 0) for rep in reps)
     return {
         "total": total,
+        "ai_anomalies": sum(1 for lead in leads if ai_flagged(lead)),
         "assigned": assigned,
         "review": sum(1 for lead in leads if is_waiting(lead)),
         "handled": sum(1 for lead in leads if lead.get("assignment_status") == STATUS_HANDLED),
@@ -969,7 +983,7 @@ def _load_tone(fraction):
 def leads_table_html(rows, show_status=True, show_reason=True, open_prefix=None):
     if not rows:
         return '<div class="empty"><h2>No leads match these filters</h2><div>Try clearing a filter.</div></div>'
-    head = ["Priority", "Lead", "Company", "Region", "Industry", "Score"]
+    head = ["Priority", "Lead", "Company", "Region", "Industry", "Language", "Score"]
     if show_status:
         head.append("Status")
     head.append("Rep")
@@ -980,6 +994,8 @@ def leads_table_html(rows, show_status=True, show_reason=True, open_prefix=None)
         score = int(lead.get("score", 0))
         cls = "row-critical" if lead.get("priority") == "Critical" else ""
         vip = f'<span class="vip"{tip("VIP")}>VIP</span>' if lead.get("vip") else ""
+        if ai_flagged(lead):
+            vip += f'<span class="ai-flag"{tip("AI FLAG")}>AI FLAG</span>'
         filled = list(lead.get("defaults_applied") or []) + [f.capitalize() + " (this lead)" for f in (lead.get("overrides") or {})]
         if filled:
             vip += (f'<span class="dflt"{tip("DEFAULT", "Defaulted by a manager, not in the data: " + ", ".join(filled))}>DEFAULTED</span>')
@@ -994,6 +1010,7 @@ def leads_table_html(rows, show_status=True, show_reason=True, open_prefix=None)
             f'<td>{esc(lead.get("company"))}</td>',
             f'<td>{field_text(lead, "region")}</td>',
             f'<td>{field_text(lead, "industry")}</td>',
+            f'<td>{field_text(lead, "language")}</td>',
             f'<td><div class="mini"><b>{score}</b><div class="track"><div class="fill blue" '
             f'style="width:{min(score, 100)}%"></div></div></div></td>',
         ]

@@ -697,7 +697,8 @@ elif tab == "Manager Review":
         r_search = r1.text_input("Search all columns", placeholder="Anything: ID, company, region, reason...",
                                  key="r_search", help=H.help_text("search"))
         r_priority = r2.multiselect("Priority", H.PRIORITIES, key="r_priority", help=H.help_text("priority"))
-        r_reason = r3.multiselect("Reason type", sorted(counts), key="r_reason", help=H.help_text("reason"))
+        r_reason = r3.multiselect("Reason type", sorted(counts), key="r_reason", help=H.help_text("reason"),
+                                  format_func=lambda reason: "No matching rep / Data anomaly" if reason == "No matching rep" else reason)
         r_cols = column_filters("r", [c for c in H.LEAD_COLUMNS if c[0] != "rep"])
         r_rows = H.filter_leads(pool, r_search, r_priority, columns=r_cols)
         if r_reason and view == "Waiting":

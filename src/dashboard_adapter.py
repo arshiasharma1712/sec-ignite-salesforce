@@ -68,6 +68,10 @@ def to_dashboard_results(result: dict[str, Any]) -> dict[str, Any]:
             "rep_name": rep["name"] if rep else "",
             "rep_seniority": rep["seniority"] if rep else "",
             "reason": outcome.get("reason") or "",
+            "anomaly_flag": outcome.get("anomaly_flag", False),
+            "anomaly_review": outcome.get("anomaly_review", False),
+            "anomaly_reasons": outcome.get("anomaly_reasons", []),
+            
         })
 
     return {
