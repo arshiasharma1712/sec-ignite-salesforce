@@ -86,4 +86,11 @@ On November 21, 2026, Python 3.12.14, Streamlit 1.67.0, pytest 9.2.0, macOS 27.2
 - A separate supplied-data measurement processed **50,000 leads / 1,600 reps**: pipeline wall time **1.431682s**, routing only **0.328773s**. Results: **40,665 assigned**, **9,335 Manager Review**, **191 excluded reps**.
 - Building assistant context, summary, one grouped review-lead query, and one grouped available-rep query took **0.069081s**. The mocked two-request answer loop took **0.147742s**. Request bodies were **7,257** and **26,638 bytes**, returning **20 leads / 20 reps**, with exact aggregate counts. These are single local measurements, not latency guarantees or live Gemini timings.
 
-No Gemini key was configured, so live authentication/model access and answer quality remain to be verified. After configuration, ask a program-only question, run Sample, request a specific lead explanation and review breakdown, ask a follow-up after a manual action, and confirm Reset clears chat. Compare the response with the displayed outcome and counts. A hosted model can still produce an incorrect explanation; the dashboard's stored results are the authoritative record.
+Live Gemini verification also passed on November 21, 2026 using the default model:
+
+- Program-only explanation: **3.44s**, correctly describing Senior preference, Manager fallback, Junior exclusion, VIP scoring, and review for unknown matching fields.
+- Sample lead lookup: **3.994s**; `lookup_record` returned L-1015's stored High priority and `Missing or invalid routing fields` review reason correctly.
+- Follow-up after marking that lead handled in memory: **5.244s**; fresh `lookup_record` and `get_summary` calls correctly reported Handled and **90** remaining review leads.
+- Filtered/grouped query: **3.863s**; `query_leads` correctly reported **29** European review leads: **25** with no matching representative and **4** with missing/invalid routing fields.
+
+These are individual smoke checks, not general answer-quality or latency guarantees. Test-only manager changes stayed in memory, and the credential stayed in the ignored local secrets file. The automated suite still uses mocked provider responses. When deploying to another environment, configure its own key and repeat the program-only, record lookup, follow-up, and reset checks. A hosted model can still produce an incorrect explanation; the dashboard's stored results are the authoritative record.
