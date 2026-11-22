@@ -142,6 +142,66 @@ def test_configuration_reads_environment_before_secrets(monkeypatch):
     assert UI._setting("GEMINI_MODEL", A.DEFAULT_MODEL) == "test-model"
 
 
+def test_dialog_edit_updates_chat_counts_and_capacity(chat_app):
+    app, requests = chat_app
+    click(app, "▶ Run Sample")
+    ask(app, "Summarize this run")
+    before = json.loads(requests[-1]["input"][0]["content"][0]["text"])["current_snapshot"]
+    lead = next(row for row in app.session_state["results"]["leads"]
+                if row["assignment_status"] == "Assigned")
+    index = lead["_i"]
+    click(app, "✎ Edit mode")
+    app.radio(key="tab").set_value("Lead Queue").run()
+    app.text_input(key="q_search").set_value(lead["lead_id"]).run()
+    app.button(key=f"rowopen_q_{index}").click().run()
+    assert not app.exception and len(app.session_state[UI.HISTORY_KEY]) == 2
+    region = "Europe" if lead["region"] != "Europe" else "North America"
+    app.selectbox(key=f"q_ed_region_{index}").set_value(region)
+    app.button(key=f"q_ed_save_{index}").click()
+    app.button(key=f"rowopen_q_{index}").click().run()
+    assert not app.exception
+    ask(app, "What changed after the field edit?")
+    after = json.loads(requests[-1]["input"][0]["content"][0]["text"])["current_snapshot"]
+    assert after["assigned"] == before["assigned"] - 1
+    assert after["manager_review"] == before["manager_review"] + 1
+    assert after["capacity_used_all_reps"] == before["capacity_used_all_reps"] - 1
+    assert len(app.session_state[UI.HISTORY_KEY]) == 4
+
+
+def test_live_link_run_clears_chat_and_failed_refresh_retains_it(chat_app, monkeypatch, tmp_path):
+    app, requests = chat_app
+    downloads = []
+
+    def download(url, target, id_column):
+        downloads.append(url)
+        filename = "leads_sample.csv" if id_column == "lead_id" else "reps_sample.csv"
+        Path(target).write_bytes((APP.parent / "data" / filename).read_bytes())
+        return filename
+
+    monkeypatch.setattr(H, "download_csv", download)
+    app.session_state["live_dir"] = str(tmp_path)
+    app.text_input(key="live_leads_url").set_value("https://example.test/leads.csv")
+    app.text_input(key="live_reps_url").set_value("https://example.test/reps.csv")
+    ask(app, "Explain the program")
+    click(app, "▶ Run from link")
+    assert app.session_state["dataset"] == "Live link"
+    assert len(app.session_state["results"]["leads"]) == 100
+    assert not app.session_state[UI.HISTORY_KEY]
+    assert set(downloads) == {"https://example.test/leads.csv", "https://example.test/reps.csv"}
+    ask(app, "Summarize the live run")
+    history = deepcopy(app.session_state[UI.HISTORY_KEY])
+
+    def fail(*args):
+        raise ValueError("The CSV link could not be read.")
+
+    monkeypatch.setattr(H, "download_csv", fail)
+    click(app, "▶ Run from link")
+    assert any("CSV link could not be read" in item.value for item in app.error)
+    assert app.session_state[UI.HISTORY_KEY] == history
+    assert len(app.session_state["results"]["leads"]) == 100
+    assert len(requests) == 2
+
+
 def test_invalid_or_missing_secrets_are_nonfatal(monkeypatch):
     class BadSecrets:
         def get(self, *args):

@@ -1,6 +1,6 @@
 # Manager assistant
 
-The Streamlit sidebar answers questions about the program and the current run. It can explain scoring and routing before a dataset is loaded. After a run, it can summarize outcomes, count and group filtered leads or reps, look up an exact displayed ID, and explain stored review reasons or current capacity. Follow-up questions use the recent conversation. Answers show the local rules/data sources supplied to the model.
+The Streamlit sidebar answers questions about the program and the current run. Open it with the upper-left sidebar arrow; it starts collapsed so the dashboard has more room. It can explain scoring and routing before a dataset is loaded. After a run, it can summarize outcomes, count and group filtered leads or reps, look up an exact displayed ID, and explain stored review reasons or current capacity. Follow-up questions use the recent conversation. Answers show the local rules/data sources supplied to the model.
 
 Examples:
 

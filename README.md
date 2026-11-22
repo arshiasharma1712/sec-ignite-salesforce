@@ -31,9 +31,9 @@ python -m pip install -r requirements.txt
 python -m streamlit run app.py
 ```
 
-Use **Run Sample**, **Run Scale**, or **Live link** to load results. **Reset** clears the run; the next run reads baseline capacities again.
+Use **Run Sample**, **Run Scale**, or **☰ Settings → Live link** to load results. **Reset** clears the run; the next run reads baseline capacities again. Click a lead or representative row to open its details. Enable **Edit mode** to change a lead's matching fields in its pop-up. Settings also includes **Grid tables** as an alternative to the colored tables. See [dashboard behavior and integration checks](docs/dashboard.md).
 
-The **Ask Assistant** sidebar explains the program and answers questions about current results using Google Gemini. It is optional: the dashboard works without an API key. Set `GEMINI_API_KEY` in the server environment or `.streamlit/secrets.toml` (ignored by Git). `GEMINI_MODEL` is optional; its default is `gemini-4-hydrogen`. See [assistant setup, behavior, and validation](docs/assistant.md) for configuration and examples.
+Open the sidebar using the arrow at the upper left to access **Ask Assistant**, which explains the program and answers questions about current results using Google Gemini. The sidebar starts collapsed to give the dashboard more room. Chat is optional: the dashboard works without an API key. Set `GEMINI_API_KEY` in the server environment or `.streamlit/secrets.toml` (ignored by Git). `GEMINI_MODEL` is optional; its default is `gemini-4-hydrogen`. See [assistant setup, behavior, and validation](docs/assistant.md) for configuration and examples.
 
 ```sh
 python -m pytest -q
