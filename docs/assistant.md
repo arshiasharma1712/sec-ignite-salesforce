@@ -70,7 +70,7 @@ Chat is retained across dashboard navigation and cleared on **Clear chat**, **Re
 | `query_reps` | Optional `filters`, `group_by`, and `limit` (1–20); filters: exact `rep_id`, seniority, region, language, industry, text search, eligibility, minimum remaining capacity |
 | `lookup_record` | `entity` (`lead`/`rep`), exact displayed `identifier`, optional zero-based dashboard `row_index` to disambiguate duplicate IDs |
 
-Groupable lead fields are priority, assignment status, region, language, industry, reason, VIP, and rep ID; rep fields are seniority, region, language, industry, and eligibility. Tool schemas spell out exact names. Queries count the full matching set before bounding rows/groups. Representative eligibility reuses `route_leads([], reps)` validation, so unknown skills, invalid capacities, and missing/duplicate IDs are excluded consistently. Eligible does not mean the rep has free slots; remaining capacity is reported separately.
+Groupable lead fields are priority, assignment status, region, language, industry, reason, VIP, and rep ID; rep fields are seniority, region, language, industry, and eligibility. Tool schemas spell out exact names. Queries count the full matching set before bounding rows/groups. Free-text searches use current lead/rep fields and computed rep eligibility/remaining capacity; hidden Undo snapshots and previous values do not contribute matches. Representative eligibility reuses `route_leads([], reps)` validation, so unknown skills, invalid capacities, and missing/duplicate IDs are excluded consistently. Eligible does not mean the rep has free slots; remaining capacity is reported separately.
 
 `src.assistant_ui.render_assistant()` renders the sidebar, and `clear_assistant_history()` clears its conversation/error state. Existing pipeline, normalization, scoring, and routing interfaces are unchanged.
 
@@ -80,11 +80,12 @@ The dashboard keeps outcomes and current capacities, not the original routing qu
 
 On November 21, 2026, Python 3.12.14, Streamlit 1.67.0, pytest 9.2.0, macOS 27.2.1 arm64:
 
-- Full suite: **488 passed in 19.76s** with `python -m pytest -p no:cacheprovider -q`.
-- 67 new tests cover exact/filtered/grouped counts, strict eligibility, duplicate/missing IDs, current manual edits, score discrepancies, unchanged inputs, bounded context, stateless tool continuation, safe failures, retry, history retention, navigation, both datasets, and reset. All provider responses are mocked.
+- Full suite after the search review: **491 passed in 20.26s** with `python -m pytest -p no:cacheprovider -q`.
+- 70 assistant tests cover exact/filtered/grouped counts, strict eligibility, duplicate/missing IDs, current manual edits, score discrepancies, unchanged inputs, bounded context, stateless tool continuation, safe failures, retry, history retention, navigation, both datasets, and reset. Regression coverage confirms searches ignore Undo snapshots, reflect restored values, and retain false/zero values. All provider responses in the automated suite are mocked.
 - Python 3.9 syntax parsing passes for the new assistant modules and app. The assistant uses stdlib REST; the full dashboard runtime was tested on Python 3.12, not 3.9.
 - A separate supplied-data measurement processed **50,000 leads / 1,600 reps**: pipeline wall time **1.431682s**, routing only **0.328773s**. Results: **40,665 assigned**, **9,335 Manager Review**, **191 excluded reps**.
 - Building assistant context, summary, one grouped review-lead query, and one grouped available-rep query took **0.069081s**. The mocked two-request answer loop took **0.147742s**. Request bodies were **7,257** and **26,638 bytes**, returning **20 leads / 20 reps**, with exact aggregate counts. These are single local measurements, not latency guarantees or live Gemini timings.
+- The search-review rerun kept the same supplied-scale outcome totals: pipeline **1.483158s**, routing **0.381673s**. A free-text Europe search among review leads took **0.102204s**, counted **3,152** matches, and returned **20** examples.
 
 Live Gemini verification also passed on November 21, 2026 using the default model:
 
