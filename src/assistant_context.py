@@ -123,10 +123,12 @@ def _row(record, index, fields):
     return row
 
 
-def _matches(row, filters):
+def _matches(row, filters, search_fields):
     for key, wanted in filters.items():
         if key == "search":
-            if wanted.casefold() not in " ".join(str(value) for value in row.values()).casefold():
+            # Dashboard records also carry Undo snapshots (auto/original_values).
+            # Searching those would count past values as current matches.
+            if wanted.casefold() not in " ".join(str(row.get(field, "")) for field in search_fields).casefold():
                 return False
         elif key in ("min_score", "min_remaining"):
             if _number(row.get("score" if key == "min_score" else "remaining")) < wanted:
@@ -202,7 +204,7 @@ class AssistantContext:
     def query_leads(self, filters=None, group_by=None, limit=MAX_ROWS):
         if not self.loaded:
             return self._no_data()
-        matches = [(i, row) for i, row in enumerate(self.leads) if _matches(row, filters or {})]
+        matches = [(i, row) for i, row in enumerate(self.leads) if _matches(row, filters or {}, LEAD_FIELDS)]
         ordered = sorted(matches, key=lambda pair: (PRIORITY.get(pair[1].get("priority"), 4),
                          -_number(pair[1].get("score")), not pair[1].get("vip", False),
                          str(pair[1].get("lead_id") or ""), pair[0]))
@@ -218,7 +220,7 @@ class AssistantContext:
         rows = [{**record, "row_index": index, "eligible": index not in self.excluded,
                  "remaining": max(0, _number(record.get("max_capacity")) - _number(record.get("current_capacity")))}
                 for index, record in enumerate(self.reps)]
-        rows = [row for row in rows if _matches(row, filters or {})]
+        rows = [row for row in rows if _matches(row, filters or {}, REP_FIELDS + ("eligible", "remaining"))]
         rows.sort(key=lambda row: (not row["eligible"], -row["remaining"], str(row.get("rep_id") or ""), row["row_index"]))
         return {"dataset": self.dataset, "total_matches": len(rows), "truncated": len(rows) > limit,
                 "available_slots_eligible_reps": sum(row["remaining"] for row in rows if row["eligible"]),

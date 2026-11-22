@@ -5,6 +5,7 @@ import pytest
 
 from src.assistant_context import AssistantContext, MAX_ROWS, MAX_TEXT
 from src.dashboard_adapter import to_dashboard_results
+from src import dashboard_helpers as H
 from src.pipeline import dataset_paths, run_dataset
 
 
@@ -91,6 +92,44 @@ def test_live_edits_score_discrepancy_and_input_preservation(assistant_results):
     assert record["rows"][0]["edited_fields"] == ["company_size"]
     assert record["rows"][0]["defaults_applied"] == ["Language"]
     assert fresh.get_summary()["available_slots_eligible_reps"] == 1
+
+
+def test_search_uses_current_fields_after_manager_edit_and_undo(assistant_results):
+    lead = assistant_results["leads"][0]
+    assistant_results["leads"] = [lead]
+    lead["defaults_applied"] = ["Region"]
+    H.edit_value(assistant_results["reps"], lead, "region", "Asia-Pacific")
+    assert lead["original_values"]["region"] == "Europe"
+    assert lead["auto"]["status"] == "Assigned"
+    baseline = deepcopy(assistant_results)
+    context = AssistantContext(assistant_results)
+    for previous_value in ("Europe", "Assigned"):
+        found = context.call("query_leads", {"filters": {"search": previous_value}, "group_by": "region"})
+        assert found["total_matches"] == 0 and found["groups"] == []
+    assert context.query_leads({"search": "Asia-Pacific"})["total_matches"] == 1
+    assert context.query_leads({"search": "Manager Review"})["total_matches"] == 1
+    assert assistant_results == baseline
+    H.clear_overrides(lead)
+    assert AssistantContext(assistant_results).query_leads({"search": "Europe"})["total_matches"] == 1
+
+
+def test_search_ignores_old_review_reason_after_manual_assignment(assistant_results):
+    lead = assistant_results["leads"][1]
+    assistant_results["leads"] = [lead]
+    old_reason = lead["reason"]
+    assert H.assign_manually(lead, assistant_results["reps"][0])
+    assert lead["auto"]["reason"] == old_reason
+    context = AssistantContext(assistant_results)
+    assert context.query_leads({"search": old_reason})["total_matches"] == 0
+    assert context.query_leads({"search": "Manually assigned"})["total_matches"] == 1
+
+
+def test_search_preserves_false_and_zero_current_values(assistant_results):
+    context = AssistantContext(assistant_results)
+    assert context.query_leads({"search": "false"})["total_matches"] == 3
+    assert context.query_reps({"search": "false"})["total_matches"] == 1
+    zero_score = AssistantContext({"leads": [{"lead_id": "L-X", "score": 0}], "reps": []})
+    assert zero_score.query_leads({"search": "0"})["total_matches"] == 1
 
 
 @pytest.mark.parametrize("name,args", [
