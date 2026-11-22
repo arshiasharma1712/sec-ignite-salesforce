@@ -1,0 +1,10 @@
+# Only application code, challenge CSVs, and the nonsecret theme enter the image.
+**
+!Dockerfile
+!app.py
+!src/
+!src/*.py
+!data/
+!data/*.csv
+!.streamlit/
+!.streamlit/config.toml
