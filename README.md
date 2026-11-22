@@ -18,7 +18,26 @@ git switch -c feature/your-task
 
 ## Project status
 
-Coordination scaffold. Application implementation and dependency selection are pending. Setup, run, and test commands will be added by the integration owner after the stack is chosen.
+The Python pipeline and Streamlit dashboard support sample and scale runs, manager review, and capacity tracking.
+
+## Run the dashboard
+
+Python 3.12 is the tested environment. From the repository root:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+Use **Run Sample**, **Run Scale**, or **Live link** to load results. **Reset** clears the run; the next run reads baseline capacities again.
+
+The **Ask Assistant** sidebar explains the program and answers questions about current results using Google Gemini. It is optional: the dashboard works without an API key. Set `GEMINI_API_KEY` in the server environment or `.streamlit/secrets.toml` (ignored by Git). `GEMINI_MODEL` is optional; its default is `gemini-4-hydrogen`. See [assistant setup, behavior, and validation](docs/assistant.md) for configuration and examples.
+
+```sh
+python -m pytest -q
+```
 
 ## Lead Scoring
 
