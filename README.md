@@ -39,6 +39,8 @@ Open the sidebar using the arrow at the upper left to access **Ask Assistant**, 
 python -m pytest -q
 ```
 
+For hosting, see [Vercel deployment setup](docs/deployment.md).
+
 ## Lead Scoring
 
 The scoring module (`src/scoring.py`) calculates lead scores based
